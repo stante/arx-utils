@@ -59,7 +59,7 @@ pub fn write_arxml_footer<W: Write>(out: &mut BufWriter<W>) {
 // ls
 // ---------------------------------------------------------------------------
 
-pub fn cmd_ls(path: &str) {
+pub fn cmd_ls(path: &str, show_elements: bool) {
     let file = open_file(path);
     let reader = BufReader::new(file);
     let mut xml = Reader::from_reader(reader);
@@ -68,6 +68,12 @@ pub fn cmd_ls(path: &str) {
     let mut buf = Vec::new();
     let mut package_stack: Vec<String> = Vec::new();
     let mut capturing_short_name = false;
+    // Are we inside an ELEMENTS block (direct child of AR-PACKAGE)?
+    let mut in_elements = false;
+    // depth of the AR-PACKAGE that owns the current ELEMENTS block
+    let mut elements_pkg_depth: usize = 0;
+    // depth of the element tag inside ELEMENTS whose SHORT-NAME we want
+    let mut element_tag_depth: usize = 0;
     let mut capture_depth: usize = 0;
     let mut depth: usize = 0;
 
@@ -76,11 +82,26 @@ pub fn cmd_ls(path: &str) {
             Ok(Event::Start(ref e)) => {
                 depth += 1;
                 let name = local_name_str(e.local_name().as_ref());
+
                 if name == "AR-PACKAGE" {
                     capture_depth = depth;
+                    in_elements = false;
+                    element_tag_depth = 0;
                 } else if name == "SHORT-NAME"
                     && capture_depth > 0
                     && depth == capture_depth + 1
+                    && !in_elements
+                    && element_tag_depth == 0
+                {
+                    capturing_short_name = true;
+                } else if show_elements && name == "ELEMENTS" && capture_depth > 0 && depth == capture_depth + 1 {
+                    in_elements = true;
+                    elements_pkg_depth = capture_depth;
+                } else if show_elements && in_elements && depth == elements_pkg_depth + 2 {
+                    // Direct child of ELEMENTS
+                    element_tag_depth = depth;
+                } else if show_elements && in_elements && element_tag_depth > 0
+                    && name == "SHORT-NAME" && depth == element_tag_depth + 1
                 {
                     capturing_short_name = true;
                 }
@@ -88,16 +109,28 @@ pub fn cmd_ls(path: &str) {
             Ok(Event::Text(ref e)) => {
                 if capturing_short_name {
                     let short_name = e.unescape().unwrap_or_default().into_owned();
-                    package_stack.push(short_name);
-                    println!("/{}", package_stack.join("/"));
                     capturing_short_name = false;
-                    capture_depth = 0;
+
+                    if in_elements && element_tag_depth > 0 {
+                        // Element inside ELEMENTS — print as leaf under current package path
+                        println!("/{}/{}", package_stack.join("/"), short_name);
+                        element_tag_depth = 0;
+                    } else {
+                        // AR-PACKAGE short name
+                        package_stack.push(short_name);
+                        println!("/{}", package_stack.join("/"));
+                    }
                 }
             }
             Ok(Event::End(ref e)) => {
                 let name = local_name_str(e.local_name().as_ref());
                 if name == "AR-PACKAGE" {
                     package_stack.pop();
+                    in_elements = false;
+                    element_tag_depth = 0;
+                } else if name == "ELEMENTS" {
+                    in_elements = false;
+                    element_tag_depth = 0;
                 }
                 depth -= 1;
             }
