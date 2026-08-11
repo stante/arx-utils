@@ -7,12 +7,12 @@ use quick_xml::Reader;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <path-to-file.arxml>", args[0]);
+    if args.len() < 3 || args[1] != "ls" {
+        eprintln!("Usage: {} ls <path-to-file.arxml>", args[0]);
         std::process::exit(1);
     }
 
-    let path = &args[1];
+    let path = &args[2];
     let file = File::open(path).unwrap_or_else(|e| {
         eprintln!("Error opening file '{}': {}", path, e);
         std::process::exit(1);
