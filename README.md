@@ -96,11 +96,19 @@ The output files are valid ARXML files — the original `<AUTOSAR>` root element
 
 Requires [Rust](https://rustup.rs/).
 
+**From GitHub:**
+
+```sh
+cargo install --git https://github.com/stante/arx-utils
+```
+
+**From a local clone:**
+
 ```sh
 cargo install --path .
 ```
 
-This installs three binaries: `arx`, `arx-ls`, and `arx-cp`.
+Both commands install three binaries: `arx`, `arx-ls`, and `arx-cp`.
 
 ---
 
