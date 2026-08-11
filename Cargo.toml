@@ -17,7 +17,3 @@ path = "src/bin/arx-ls.rs"
 [[bin]]
 name = "arx-cp"
 path = "src/bin/arx-cp.rs"
-
-[[bin]]
-name = "arx-mv"
-path = "src/bin/arx-mv.rs"
