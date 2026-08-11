@@ -1,5 +1,5 @@
 use std::env;
-use arxml_split::{cmd_cp, parse_cp_args};
+use arx_utils::{cmd_cp, parse_cp_args};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

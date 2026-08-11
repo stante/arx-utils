@@ -1,5 +1,5 @@
 use std::env;
-use arxml_split::cmd_ls;
+use arx_utils::cmd_ls;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
