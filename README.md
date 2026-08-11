@@ -1,5 +1,7 @@
 # arx-utils
 
+[![CI](https://github.com/stante/arx-utils/actions/workflows/ci.yml/badge.svg)](https://github.com/stante/arx-utils/actions/workflows/ci.yml)
+
 Command-line utilities for working with AUTOSAR ARXML files.
 
 ## Tools
