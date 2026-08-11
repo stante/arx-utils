@@ -60,6 +60,14 @@ pub fn write_arxml_footer<W: Write>(out: &mut BufWriter<W>) {
 // ---------------------------------------------------------------------------
 
 pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>, recursive: bool) {
+    for line in ls_collect(path, show_elements, filter, recursive) {
+        println!("{}", line);
+    }
+}
+
+/// Core logic of `ls`: returns the list of paths that would be printed.
+/// Separated from `cmd_ls` so it can be called in tests without capturing stdout.
+pub fn ls_collect(path: &str, show_elements: bool, filter: Option<&str>, recursive: bool) -> Vec<String> {
     let filter = filter.map(|f| normalise_path(f));
     // Depth of the filter path (0 = no filter, 1 = /Root, 2 = /Root/Components, ...)
     let filter_depth = filter.as_deref().map(|f| f.split('/').count()).unwrap_or(0);
@@ -77,6 +85,7 @@ pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>, recursive: 
     let mut element_tag_depth: usize = 0;
     let mut capture_depth: usize = 0;
     let mut depth: usize = 0;
+    let mut results: Vec<String> = Vec::new();
 
     loop {
         match xml.read_event_into(&mut buf) {
@@ -134,14 +143,14 @@ pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>, recursive: 
                             }
                         };
                         if element_visible {
-                            println!("{}", full);
+                            results.push(full);
                         }
                         element_tag_depth = 0;
                     } else {
                         package_stack.push(short_name);
                         let full = format!("/{}", package_stack.join("/"));
                         if should_print(&full, filter.as_deref(), filter_depth, recursive) {
-                            println!("{}", full);
+                            results.push(full);
                         }
                     }
                 }
@@ -167,6 +176,8 @@ pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>, recursive: 
         }
         buf.clear();
     }
+
+    results
 }
 
 /// Returns true if `full_path` should be printed.
