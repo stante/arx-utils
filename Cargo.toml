@@ -5,3 +5,19 @@ edition = "2024"
 
 [dependencies]
 quick-xml = "0.36"
+
+[[bin]]
+name = "arx"
+path = "src/bin/arx.rs"
+
+[[bin]]
+name = "arx-ls"
+path = "src/bin/arx-ls.rs"
+
+[[bin]]
+name = "arx-cp"
+path = "src/bin/arx-cp.rs"
+
+[[bin]]
+name = "arx-mv"
+path = "src/bin/arx-mv.rs"
