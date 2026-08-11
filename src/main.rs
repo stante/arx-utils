@@ -21,11 +21,11 @@ fn main() {
             }
             cmd_ls(&args[2]);
         }
-        "split" => {
+        "cp" => {
             // split <input.arxml> <pkg1> [<pkg2> ...] <output.arxml>
             if args.len() < 5 {
                 eprintln!(
-                    "Usage: {} split <input.arxml> <pkg1> [<pkg2> ...] <output.arxml>",
+                    "Usage: {} cp <input.arxml> <pkg1> [<pkg2> ...] <output.arxml>",
                     args[0]
                 );
                 std::process::exit(1);
@@ -49,7 +49,7 @@ fn print_usage(prog: &str) {
     eprintln!("Usage:");
     eprintln!("  {} ls <file.arxml>", prog);
     eprintln!(
-        "  {} split <file.arxml> <pkg1> [<pkg2> ...] <output.arxml>",
+        "  {} cp <file.arxml> <pkg1> [<pkg2> ...] <output.arxml>",
         prog
     );
 }
