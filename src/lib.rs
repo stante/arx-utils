@@ -59,7 +59,9 @@ pub fn write_arxml_footer<W: Write>(out: &mut BufWriter<W>) {
 // ls
 // ---------------------------------------------------------------------------
 
-pub fn cmd_ls(path: &str, show_elements: bool) {
+pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>) {
+    let filter = filter.map(|f| normalise_path(f));
+
     let file = open_file(path);
     let reader = BufReader::new(file);
     let mut xml = Reader::from_reader(reader);
@@ -68,11 +70,8 @@ pub fn cmd_ls(path: &str, show_elements: bool) {
     let mut buf = Vec::new();
     let mut package_stack: Vec<String> = Vec::new();
     let mut capturing_short_name = false;
-    // Are we inside an ELEMENTS block (direct child of AR-PACKAGE)?
     let mut in_elements = false;
-    // depth of the AR-PACKAGE that owns the current ELEMENTS block
     let mut elements_pkg_depth: usize = 0;
-    // depth of the element tag inside ELEMENTS whose SHORT-NAME we want
     let mut element_tag_depth: usize = 0;
     let mut capture_depth: usize = 0;
     let mut depth: usize = 0;
@@ -98,7 +97,6 @@ pub fn cmd_ls(path: &str, show_elements: bool) {
                     in_elements = true;
                     elements_pkg_depth = capture_depth;
                 } else if show_elements && in_elements && depth == elements_pkg_depth + 2 {
-                    // Direct child of ELEMENTS
                     element_tag_depth = depth;
                 } else if show_elements && in_elements && element_tag_depth > 0
                     && name == "SHORT-NAME" && depth == element_tag_depth + 1
@@ -112,13 +110,17 @@ pub fn cmd_ls(path: &str, show_elements: bool) {
                     capturing_short_name = false;
 
                     if in_elements && element_tag_depth > 0 {
-                        // Element inside ELEMENTS — print as leaf under current package path
-                        println!("/{}/{}", package_stack.join("/"), short_name);
+                        let full = format!("/{}/{}", package_stack.join("/"), short_name);
+                        if should_print(&full, filter.as_deref()) {
+                            println!("{}", full);
+                        }
                         element_tag_depth = 0;
                     } else {
-                        // AR-PACKAGE short name
                         package_stack.push(short_name);
-                        println!("/{}", package_stack.join("/"));
+                        let full = format!("/{}", package_stack.join("/"));
+                        if should_print(&full, filter.as_deref()) {
+                            println!("{}", full);
+                        }
                     }
                 }
             }
@@ -142,6 +144,19 @@ pub fn cmd_ls(path: &str, show_elements: bool) {
             _ => {}
         }
         buf.clear();
+    }
+}
+
+/// Returns true if `full_path` should be printed given the filter.
+/// A path is printed if it equals the filter or starts with `filter/`.
+fn should_print(full_path: &str, filter: Option<&str>) -> bool {
+    match filter {
+        None => true,
+        Some(f) => {
+            let filter_with_slash = format!("/{}", f);
+            full_path == filter_with_slash
+                || full_path.starts_with(&format!("{}/", filter_with_slash))
+        }
     }
 }
 
