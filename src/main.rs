@@ -22,7 +22,6 @@ fn main() {
             cmd_ls(&args[2]);
         }
         "cp" => {
-            // split <input.arxml> <pkg1> [<pkg2> ...] <output.arxml>
             if args.len() < 5 {
                 eprintln!(
                     "Usage: {} cp <input.arxml> <pkg1> [<pkg2> ...] <output.arxml>",
@@ -38,6 +37,22 @@ fn main() {
                 .collect();
             cmd_split(input, &packages, output);
         }
+        "mv" => {
+            if args.len() < 5 {
+                eprintln!(
+                    "Usage: {} mv <input.arxml> <pkg1> [<pkg2> ...] <output.arxml>",
+                    args[0]
+                );
+                std::process::exit(1);
+            }
+            let input = &args[2];
+            let output = &args[args.len() - 1];
+            let packages: Vec<String> = args[3..args.len() - 1]
+                .iter()
+                .map(|s| normalise_path(s))
+                .collect();
+            cmd_mv(input, &packages, output);
+        }
         _ => {
             print_usage(&args[0]);
             std::process::exit(1);
@@ -50,6 +65,10 @@ fn print_usage(prog: &str) {
     eprintln!("  {} ls <file.arxml>", prog);
     eprintln!(
         "  {} cp <file.arxml> <pkg1> [<pkg2> ...] <output.arxml>",
+        prog
+    );
+    eprintln!(
+        "  {} mv <file.arxml> <pkg1> [<pkg2> ...] <output.arxml>",
         prog
     );
 }
@@ -163,6 +182,88 @@ fn cmd_split(input: &str, packages: &[String], output: &str) {
     writeln!(out, "</AUTOSAR>").unwrap();
 
     println!("Written to '{}'", output);
+}
+
+// ---------------------------------------------------------------------------
+// mv
+// ---------------------------------------------------------------------------
+
+fn cmd_mv(input: &str, packages: &[String], output: &str) {
+    let targets: HashSet<&str> = packages.iter().map(|s| s.as_str()).collect();
+
+    let root_attrs = collect_root_attrs(input);
+    let ranges = find_package_ranges(input, &targets);
+
+    if ranges.is_empty() {
+        eprintln!("No matching packages found.");
+        std::process::exit(1);
+    }
+
+    // --- write output file (same as cp) ---
+    {
+        let out_file = File::create(output).unwrap_or_else(|e| {
+            eprintln!("Cannot create output file '{}': {}", output, e);
+            std::process::exit(1);
+        });
+        let mut out = BufWriter::new(out_file);
+
+        writeln!(out, r#"<?xml version="1.0" encoding="UTF-8"?>"#).unwrap();
+        write!(out, "<AUTOSAR").unwrap();
+        for (k, v) in &root_attrs {
+            write!(out, r#" {}="{}""#, k, v).unwrap();
+        }
+        writeln!(out, ">").unwrap();
+        writeln!(out, "  <AR-PACKAGES>").unwrap();
+
+        let mut src = File::open(input).unwrap();
+        for range in &ranges {
+            src.seek(SeekFrom::Start(range.start)).unwrap();
+            let len = (range.end - range.start) as usize;
+            let mut block = vec![0u8; len];
+            src.read_exact(&mut block).unwrap();
+            out.write_all(&block).unwrap();
+            writeln!(out).unwrap();
+        }
+
+        writeln!(out, "  </AR-PACKAGES>").unwrap();
+        writeln!(out, "</AUTOSAR>").unwrap();
+    }
+    println!("Written to '{}'", output);
+
+    // --- rewrite input file, skipping the moved ranges ---
+    let mut raw = Vec::new();
+    open_file(input).read_to_end(&mut raw).unwrap();
+
+    // Write all bytes of raw except those covered by ranges.
+    // Ranges are in document order (non-overlapping), so we can iterate linearly.
+    let tmp_path = format!("{}.tmp", input);
+    {
+        let tmp_file = File::create(&tmp_path).unwrap_or_else(|e| {
+            eprintln!("Cannot create temp file '{}': {}", tmp_path, e);
+            std::process::exit(1);
+        });
+        let mut tmp = BufWriter::new(tmp_file);
+
+        let mut pos: u64 = 0;
+        for range in &ranges {
+            // write bytes before this range
+            if range.start > pos {
+                tmp.write_all(&raw[pos as usize..range.start as usize])
+                    .unwrap();
+            }
+            pos = range.end;
+        }
+        // write remaining bytes after last range
+        if (pos as usize) < raw.len() {
+            tmp.write_all(&raw[pos as usize..]).unwrap();
+        }
+    }
+
+    std::fs::rename(&tmp_path, input).unwrap_or_else(|e| {
+        eprintln!("Failed to overwrite input file: {}", e);
+        std::process::exit(1);
+    });
+    println!("Removed packages from '{}'", input);
 }
 
 fn find_package_ranges(path: &str, targets: &HashSet<&str>) -> Vec<PackageRange> {
