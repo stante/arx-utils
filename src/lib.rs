@@ -59,8 +59,10 @@ pub fn write_arxml_footer<W: Write>(out: &mut BufWriter<W>) {
 // ls
 // ---------------------------------------------------------------------------
 
-pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>) {
+pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>, recursive: bool) {
     let filter = filter.map(|f| normalise_path(f));
+    // Depth of the filter path (0 = no filter, 1 = /Root, 2 = /Root/Components, ...)
+    let filter_depth = filter.as_deref().map(|f| f.split('/').count()).unwrap_or(0);
 
     let file = open_file(path);
     let reader = BufReader::new(file);
@@ -111,14 +113,34 @@ pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>) {
 
                     if in_elements && element_tag_depth > 0 {
                         let full = format!("/{}/{}", package_stack.join("/"), short_name);
-                        if should_print(&full, filter.as_deref()) {
+                        // Element is a direct child of package_stack's current package.
+                        // Print it when the parent package would be visible:
+                        // - in recursive mode: parent just needs to be under filter
+                        // - in non-recursive mode: parent must be at exactly filter_depth
+                        //   (i.e. the filtered package itself, or top-level if no filter)
+                        let parent_depth = package_stack.len();
+                        let element_visible = match filter.as_deref() {
+                            None => {
+                                if recursive { true } else { parent_depth == filter_depth }
+                            }
+                            Some(f) => {
+                                let parent = format!("/{}", package_stack.join("/"));
+                                let filter_with_slash = format!("/{}", f);
+                                let under = parent == filter_with_slash
+                                    || parent.starts_with(&format!("{}/", filter_with_slash));
+                                if !under { false }
+                                else if recursive { true }
+                                else { parent_depth == filter_depth + 1 || parent == filter_with_slash }
+                            }
+                        };
+                        if element_visible {
                             println!("{}", full);
                         }
                         element_tag_depth = 0;
                     } else {
                         package_stack.push(short_name);
                         let full = format!("/{}", package_stack.join("/"));
-                        if should_print(&full, filter.as_deref()) {
+                        if should_print(&full, filter.as_deref(), filter_depth, recursive) {
                             println!("{}", full);
                         }
                     }
@@ -147,17 +169,29 @@ pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>) {
     }
 }
 
-/// Returns true if `full_path` should be printed given the filter.
-/// A path is printed if it equals the filter or starts with `filter/`.
-fn should_print(full_path: &str, filter: Option<&str>) -> bool {
-    match filter {
+/// Returns true if `full_path` should be printed.
+/// - filter: optional prefix the path must be under (or equal to)
+/// - filter_depth: number of segments in the filter path
+/// - recursive: if false, only print direct children (depth == filter_depth + 1)
+fn should_print(full_path: &str, filter: Option<&str>, filter_depth: usize, recursive: bool) -> bool {
+    // Check prefix constraint
+    let under_filter = match filter {
         None => true,
         Some(f) => {
             let filter_with_slash = format!("/{}", f);
             full_path == filter_with_slash
                 || full_path.starts_with(&format!("{}/", filter_with_slash))
         }
+    };
+    if !under_filter {
+        return false;
     }
+    if recursive {
+        return true;
+    }
+    // Non-recursive: only print at exactly filter_depth + 1
+    let path_depth = full_path.trim_start_matches('/').split('/').count();
+    path_depth == filter_depth + 1
 }
 
 // ---------------------------------------------------------------------------
