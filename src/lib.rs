@@ -327,6 +327,58 @@ pub fn cmd_cp(input: &str, groups: &[CpGroup], rest_file: Option<&str>) {
 }
 
 // ---------------------------------------------------------------------------
+// rm
+// ---------------------------------------------------------------------------
+
+/// Parse arguments after `rm <input>`:
+/// `<pkg1> [<pkg2>...]`
+pub fn parse_rm_args(args: &[String]) -> Vec<String> {
+    args.iter().map(|a| normalise_path(a)).collect()
+}
+
+/// Remove the given AR-PACKAGE blocks from `input`, overwriting the file in-place.
+pub fn cmd_rm(input: &str, packages: &[String]) {
+    let to_remove: HashSet<&str> = packages.iter().map(|s| s.as_str()).collect();
+
+    let root_attrs = collect_root_attrs(input);
+    let all_toplevel = find_all_toplevel_package_ranges(input);
+
+    let mut raw = Vec::new();
+    open_file(input).read_to_end(&mut raw).unwrap();
+
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut out = BufWriter::new(&mut buf);
+        write_arxml_header(&mut out, &root_attrs);
+
+        let mut any_removed = false;
+        for range in &all_toplevel {
+            let norm = normalise_path(&range.path);
+            let last_segment = norm.split('/').last().unwrap_or(&norm);
+            if to_remove.contains(norm.as_str()) || to_remove.contains(last_segment) {
+                any_removed = true;
+            } else {
+                out.write_all(&raw[range.start as usize..range.end as usize])
+                    .unwrap();
+                writeln!(out).unwrap();
+            }
+        }
+
+        write_arxml_footer(&mut out);
+
+        if !any_removed {
+            eprintln!("Warning: none of the specified packages were found in the input.");
+        }
+    }
+
+    let out_file = File::create(input).unwrap_or_else(|e| {
+        eprintln!("Cannot write to file '{}': {}", input, e);
+        std::process::exit(1);
+    });
+    BufWriter::new(out_file).write_all(&buf).unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // Range finding
 // ---------------------------------------------------------------------------
 

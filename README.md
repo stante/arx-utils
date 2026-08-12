@@ -92,6 +92,30 @@ The output files are valid ARXML files — the original `<AUTOSAR>` root element
 
 ---
 
+### `arx rm` — Remove AR-Packages
+
+Removes one or more `AR-PACKAGE` blocks from an ARXML file, modifying the file in-place.
+
+```
+arx rm <file.arxml> <pkg1> [<pkg2> ...]
+```
+
+Package paths can be specified with or without a leading `/`.
+
+**Examples:**
+
+```sh
+# Remove a single package
+arx rm model.arxml /Root/Components
+
+# Remove multiple packages at once
+arx rm model.arxml /Root/Components /Root/Interfaces
+```
+
+The file is overwritten in-place. All remaining packages are preserved byte-for-byte and the result is a valid ARXML file.
+
+---
+
 ## Installation
 
 Requires [Rust](https://rustup.rs/).
@@ -108,7 +132,7 @@ cargo install --git https://github.com/stante/arx-utils
 cargo install --path .
 ```
 
-Both commands install three binaries: `arx`, `arx-ls`, and `arx-cp`.
+Both commands install three binaries: `arx`, `arx-ls`, `arx-cp`, and `arx-rm`.
 
 ---
 

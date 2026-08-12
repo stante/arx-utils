@@ -3,7 +3,8 @@ use std::fs;
 use std::io::Write;
 
 use arx_utils::{
-    cmd_cp, find_package_ranges, ls_collect, normalise_path, parse_cp_args, CpGroup,
+    cmd_cp, cmd_rm, find_package_ranges, ls_collect, normalise_path, parse_cp_args, parse_rm_args,
+    CpGroup,
 };
 use tempfile::TempDir;
 
@@ -418,4 +419,98 @@ fn cmd_cp_preserves_nested_content() {
     let names = ls_collect(&output, false, None, true);
     assert!(names.contains(&"/Root/Components".to_string()));
     assert!(names.contains(&"/Root/Interfaces".to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// parse_rm_args
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_rm_args_single_package() {
+    let args = vec![s("/Alpha")];
+    let pkgs = parse_rm_args(&args);
+    assert_eq!(pkgs, vec!["Alpha"]);
+}
+
+#[test]
+fn parse_rm_args_multiple_packages() {
+    let args = vec![s("/Alpha"), s("/Beta")];
+    let pkgs = parse_rm_args(&args);
+    assert_eq!(pkgs, vec!["Alpha", "Beta"]);
+}
+
+#[test]
+fn parse_rm_args_normalises_paths() {
+    let args = vec![s("Root/Components"), s("/Root/Interfaces")];
+    let pkgs = parse_rm_args(&args);
+    assert_eq!(pkgs, vec!["Root/Components", "Root/Interfaces"]);
+}
+
+// ---------------------------------------------------------------------------
+// cmd_rm
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cmd_rm_removes_single_package_in_place() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    cmd_rm(&path, &[s("Alpha")]);
+
+    let names = toplevel_package_names(&path);
+    assert!(!names.contains(&"Alpha".to_string()), "Alpha should have been removed");
+    assert!(names.contains(&"Beta".to_string()));
+    assert!(names.contains(&"Gamma".to_string()));
+}
+
+#[test]
+fn cmd_rm_removes_multiple_packages_in_place() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    cmd_rm(&path, &[s("Alpha"), s("Beta")]);
+
+    let names = toplevel_package_names(&path);
+    assert!(!names.contains(&"Alpha".to_string()));
+    assert!(!names.contains(&"Beta".to_string()));
+    assert_eq!(names, vec!["Gamma"]);
+}
+
+#[test]
+fn cmd_rm_result_is_valid_arxml() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    cmd_rm(&path, &[s("Beta")]);
+
+    // ls_collect must parse the result without errors
+    let names = toplevel_package_names(&path);
+    assert_eq!(names, vec!["Alpha", "Gamma"]);
+}
+
+#[test]
+fn cmd_rm_with_leading_slash_normalised() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    // parse_rm_args normalises the leading slash before cmd_rm is called
+    let pkgs = parse_rm_args(&[s("/Gamma")]);
+    cmd_rm(&path, &pkgs);
+
+    let names = toplevel_package_names(&path);
+    assert!(!names.contains(&"Gamma".to_string()));
+}
+
+#[test]
+fn cmd_rm_preserves_remaining_package_content() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    cmd_rm(&path, &[s("Types")]);
+
+    let names = ls_collect(&path, false, None, true);
+    assert!(names.contains(&"/Root".to_string()));
+    assert!(names.contains(&"/Root/Components".to_string()));
+    assert!(names.contains(&"/Root/Interfaces".to_string()));
+    assert!(!names.contains(&"/Types".to_string()));
 }
