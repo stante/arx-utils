@@ -336,7 +336,11 @@ pub fn parse_rm_args(args: &[String]) -> Vec<String> {
     args.iter().map(|a| normalise_path(a)).collect()
 }
 
-/// Remove the given AR-PACKAGE blocks from `input`, overwriting the file in-place.
+/// Remove the given AR-PACKAGE or ELEMENT blocks from `input`, overwriting the file in-place.
+///
+/// Paths that match a top-level (or nested) AR-PACKAGE are removed entirely.
+/// Paths that match an element inside an `<ELEMENTS>` block (three-segment paths
+/// like `Root/Components/MyComponent`) remove only that element tag.
 pub fn cmd_rm(input: &str, packages: &[String]) {
     let to_remove: HashSet<&str> = packages.iter().map(|s| s.as_str()).collect();
 
@@ -346,20 +350,60 @@ pub fn cmd_rm(input: &str, packages: &[String]) {
     let mut raw = Vec::new();
     open_file(input).read_to_end(&mut raw).unwrap();
 
+    // Collect element ranges for paths that look like element references
+    // (i.e. not matched by any top-level package range).
+    let toplevel_paths: HashSet<&str> = all_toplevel.iter().map(|r| r.path.as_str()).collect();
+    let element_targets: HashSet<&str> = to_remove
+        .iter()
+        .copied()
+        .filter(|p| !toplevel_paths.contains(p))
+        .collect();
+
+    let element_ranges = if element_targets.is_empty() {
+        vec![]
+    } else {
+        find_element_ranges(input, &element_targets)
+    };
+
     let mut buf: Vec<u8> = Vec::new();
     {
         let mut out = BufWriter::new(&mut buf);
         write_arxml_header(&mut out, &root_attrs);
 
         let mut any_removed = false;
+
         for range in &all_toplevel {
             let norm = normalise_path(&range.path);
-            let last_segment = norm.split('/').last().unwrap_or(&norm);
-            if to_remove.contains(norm.as_str()) || to_remove.contains(last_segment) {
+            if to_remove.contains(norm.as_str()) {
                 any_removed = true;
-            } else {
+                continue;
+            }
+
+            // Collect element ranges that fall inside this top-level package.
+            let mut inner: Vec<&PackageRange> = element_ranges
+                .iter()
+                .filter(|er| er.start >= range.start && er.end <= range.end)
+                .collect();
+
+            if inner.is_empty() {
+                // No element deletions inside this package — copy verbatim.
                 out.write_all(&raw[range.start as usize..range.end as usize])
                     .unwrap();
+                writeln!(out).unwrap();
+            } else {
+                // Copy the package bytes, skipping the element ranges.
+                inner.sort_by_key(|r| r.start);
+                let mut cursor = range.start as usize;
+                for er in &inner {
+                    if cursor < er.start as usize {
+                        out.write_all(&raw[cursor..er.start as usize]).unwrap();
+                    }
+                    cursor = er.end as usize;
+                    any_removed = true;
+                }
+                if cursor < range.end as usize {
+                    out.write_all(&raw[cursor..range.end as usize]).unwrap();
+                }
                 writeln!(out).unwrap();
             }
         }
@@ -367,7 +411,7 @@ pub fn cmd_rm(input: &str, packages: &[String]) {
         write_arxml_footer(&mut out);
 
         if !any_removed {
-            eprintln!("Warning: none of the specified packages were found in the input.");
+            eprintln!("Warning: none of the specified packages or elements were found in the input.");
         }
     }
 
@@ -381,6 +425,119 @@ pub fn cmd_rm(input: &str, packages: &[String]) {
 // ---------------------------------------------------------------------------
 // Range finding
 // ---------------------------------------------------------------------------
+
+/// Find byte ranges of individual elements inside `<ELEMENTS>` blocks whose
+/// full path (`Package/SubPkg/ShortName`) matches one of the `targets`.
+///
+/// The returned `PackageRange.path` is the full slash-separated path of the element.
+pub fn find_element_ranges(path: &str, targets: &HashSet<&str>) -> Vec<PackageRange> {
+    let mut raw = Vec::new();
+    open_file(path).read_to_end(&mut raw).unwrap();
+    let cursor = Cursor::new(&raw);
+    let mut xml = Reader::from_reader(cursor);
+    xml.config_mut().trim_text(false);
+
+    let mut buf = Vec::new();
+    let mut pkg_stack: Vec<String> = Vec::new();
+    let mut depth: usize = 0;
+
+    let mut in_elements = false;
+    let mut elements_depth: usize = 0;
+    let mut element_tag_depth: usize = 0;
+    let mut element_start: u64 = 0;
+
+    let mut read_short_name = false;
+    let mut sn_context: &str = "pkg"; // "pkg" | "element"
+
+    let mut ranges: Vec<PackageRange> = Vec::new();
+    let mut pos_before: u64;
+
+    loop {
+        pos_before = xml.buffer_position() as u64;
+        let event = xml.read_event_into(&mut buf);
+        let pos_after = xml.buffer_position() as u64;
+
+        match event {
+            Ok(Event::Start(ref e)) => {
+                depth += 1;
+                let name = local_name_str(e.local_name().as_ref());
+
+                if name == "AR-PACKAGE" {
+                    // nothing special yet; SHORT-NAME reading set below
+                } else if name == "ELEMENTS" && !in_elements {
+                    in_elements = true;
+                    elements_depth = depth;
+                } else if in_elements && depth == elements_depth + 1 && element_tag_depth == 0 {
+                    element_tag_depth = depth;
+                    element_start = pos_before;
+                }
+
+                if name == "SHORT-NAME" {
+                    if in_elements && element_tag_depth > 0 && depth == element_tag_depth + 1 {
+                        read_short_name = true;
+                        sn_context = "element";
+                    } else if !in_elements {
+                        read_short_name = true;
+                        sn_context = "pkg";
+                    }
+                }
+            }
+            Ok(Event::Text(ref e)) => {
+                if read_short_name {
+                    let raw_text = e.unescape().unwrap_or_default();
+                    let trimmed = raw_text.trim();
+                    if trimmed.is_empty() {
+                        buf.clear();
+                        continue;
+                    }
+                    read_short_name = false;
+                    pkg_stack.push(trimmed.to_string());
+                    let _ = sn_context;
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let name = local_name_str(e.local_name().as_ref());
+
+                if in_elements && element_tag_depth > 0 && depth == element_tag_depth {
+                    // Closing tag of an element — finalise range if it matches
+                    if let Some(short_name) = pkg_stack.last().cloned() {
+                        let parent = if pkg_stack.len() >= 2 {
+                            pkg_stack[..pkg_stack.len() - 1].join("/")
+                        } else {
+                            String::new()
+                        };
+                        let full = format!("{}/{}", parent, short_name);
+                        if targets.contains(full.as_str()) {
+                            ranges.push(PackageRange {
+                                start: element_start,
+                                end: pos_after,
+                                path: full,
+                            });
+                        }
+                        pkg_stack.pop();
+                    }
+                    element_tag_depth = 0;
+                } else if name == "ELEMENTS" && in_elements && depth == elements_depth {
+                    in_elements = false;
+                    elements_depth = 0;
+                } else if name == "AR-PACKAGE" && !in_elements {
+                    pkg_stack.pop();
+                }
+
+                depth -= 1;
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => {
+                eprintln!("XML parse error: {}", e);
+                std::process::exit(1);
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    ranges
+}
 
 pub fn find_package_ranges(path: &str, targets: &HashSet<&str>) -> Vec<PackageRange> {
     let mut raw = Vec::new();

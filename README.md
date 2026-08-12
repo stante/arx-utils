@@ -94,10 +94,10 @@ The output files are valid ARXML files — the original `<AUTOSAR>` root element
 
 ### `arx rm` — Remove AR-Packages
 
-Removes one or more `AR-PACKAGE` blocks from an ARXML file, modifying the file in-place.
+Removes one or more `AR-PACKAGE` blocks or individual `ELEMENTS` entries from an ARXML file, modifying the file in-place.
 
 ```
-arx rm <file.arxml> <pkg1> [<pkg2> ...]
+arx rm <file.arxml> <path1> [<path2> ...]
 ```
 
 Package paths can be specified with or without a leading `/`.
@@ -105,14 +105,20 @@ Package paths can be specified with or without a leading `/`.
 **Examples:**
 
 ```sh
-# Remove a single package
+# Remove a top-level package
 arx rm model.arxml /Root/Components
 
 # Remove multiple packages at once
 arx rm model.arxml /Root/Components /Root/Interfaces
+
+# Remove a single element inside a package
+arx rm model.arxml /Root/Components/MyComponent
+
+# Mix: remove a package and an element in one call
+arx rm model.arxml /Root/Types /Root/Components/MyComponent
 ```
 
-The file is overwritten in-place. All remaining packages are preserved byte-for-byte and the result is a valid ARXML file.
+The file is overwritten in-place. Remaining packages and elements are preserved byte-for-byte and the result is a valid ARXML file.
 
 ---
 

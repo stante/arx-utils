@@ -3,8 +3,8 @@ use std::fs;
 use std::io::Write;
 
 use arx_utils::{
-    cmd_cp, cmd_rm, find_package_ranges, ls_collect, normalise_path, parse_cp_args, parse_rm_args,
-    CpGroup,
+    cmd_cp, cmd_rm, find_element_ranges, find_package_ranges, ls_collect, normalise_path,
+    parse_cp_args, parse_rm_args, CpGroup,
 };
 use tempfile::TempDir;
 
@@ -513,4 +513,85 @@ fn cmd_rm_preserves_remaining_package_content() {
     assert!(names.contains(&"/Root/Components".to_string()));
     assert!(names.contains(&"/Root/Interfaces".to_string()));
     assert!(!names.contains(&"/Types".to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// find_element_ranges
+// ---------------------------------------------------------------------------
+
+#[test]
+fn find_element_ranges_finds_element_by_full_path() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let targets: HashSet<&str> = ["Root/Components/MyComponent"].iter().cloned().collect();
+    let ranges = find_element_ranges(&path, &targets);
+
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].path, "Root/Components/MyComponent");
+
+    let raw = fs::read(&path).unwrap();
+    let block = std::str::from_utf8(&raw[ranges[0].start as usize..ranges[0].end as usize]).unwrap();
+    assert!(block.contains("MyComponent"), "block: {}", block);
+    assert!(block.contains("APPLICATION-SW-COMPONENT-TYPE"), "block: {}", block);
+}
+
+#[test]
+fn find_element_ranges_unknown_element_returns_empty() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let targets: HashSet<&str> = ["Root/Components/DoesNotExist"].iter().cloned().collect();
+    let ranges = find_element_ranges(&path, &targets);
+    assert!(ranges.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// cmd_rm with elements
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cmd_rm_removes_element_from_package() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let pkgs = parse_rm_args(&[s("Root/Components/MyComponent")]);
+    cmd_rm(&path, &pkgs);
+
+    // Package must still exist
+    let names = ls_collect(&path, false, None, true);
+    assert!(names.contains(&"/Root/Components".to_string()));
+
+    // Element must be gone
+    let elements = ls_collect(&path, true, Some("/Root/Components"), false);
+    assert!(!elements.contains(&"/Root/Components/MyComponent".to_string()),
+        "MyComponent should have been removed, got: {:?}", elements);
+}
+
+#[test]
+fn cmd_rm_element_leaves_sibling_elements_intact() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    // Remove MyComponent from Components, MySRInterface in Interfaces must survive
+    let pkgs = parse_rm_args(&[s("Root/Components/MyComponent")]);
+    cmd_rm(&path, &pkgs);
+
+    let elements = ls_collect(&path, true, Some("/Root/Interfaces"), false);
+    assert!(elements.contains(&"/Root/Interfaces/MySRInterface".to_string()),
+        "MySRInterface should still be present, got: {:?}", elements);
+}
+
+#[test]
+fn cmd_rm_element_result_is_valid_arxml() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let pkgs = parse_rm_args(&[s("Root/Interfaces/MySRInterface")]);
+    cmd_rm(&path, &pkgs);
+
+    // ls_collect must be able to parse the result without errors
+    let names = ls_collect(&path, false, None, true);
+    assert!(names.contains(&"/Root".to_string()));
+    assert!(names.contains(&"/Root/Interfaces".to_string()));
 }
