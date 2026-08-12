@@ -36,4 +36,5 @@ fn print_usage() {
     eprintln!("Commands:");
     eprintln!("  ls  <file.arxml>");
     eprintln!("  cp  <file.arxml> <pkg1> [<pkg2> ...] --into <out.arxml> [--rest <rest.arxml>]");
+    eprintln!("  rm  <file.arxml> <path1> [<path2> ...]");
 }
