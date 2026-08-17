@@ -3,8 +3,9 @@ use std::fs;
 use std::io::Write;
 
 use arx_utils::{
-    cmd_cp, cmd_diff, cmd_rm, collect_all_paths, find_element_ranges, find_package_ranges,
-    ls_collect, normalise_path, parse_cp_args, parse_rm_args, CpGroup,
+    cmd_cp, cmd_diff, cmd_diff_extended, cmd_rm, collect_all_paths, collect_element_fields,
+    find_element_ranges, find_package_ranges, ls_collect, normalise_path, parse_cp_args,
+    parse_rm_args, CpGroup,
 };
 use tempfile::TempDir;
 
@@ -753,5 +754,104 @@ fn cmd_diff_filter_no_match_both_empty_is_identical() {
 
     // /NonExistent matches nothing in either file -> both empty sets -> identical
     assert!(cmd_diff(&a, &b, Some("/NonExistent")));
+}
+
+// ---------------------------------------------------------------------------
+// collect_element_fields / cmd_diff_extended
+// ---------------------------------------------------------------------------
+
+/// ARXML with elements that have CATEGORY and DESC fields — base version.
+const ELEMENTS_ARXML_A: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>Root</SHORT-NAME>
+      <AR-PACKAGES>
+        <AR-PACKAGE>
+          <SHORT-NAME>Components</SHORT-NAME>
+          <ELEMENTS>
+            <APPLICATION-SW-COMPONENT-TYPE>
+              <SHORT-NAME>MyComp</SHORT-NAME>
+              <CATEGORY>APPLICATION</CATEGORY>
+              <DESC>Original description</DESC>
+            </APPLICATION-SW-COMPONENT-TYPE>
+          </ELEMENTS>
+        </AR-PACKAGE>
+      </AR-PACKAGES>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>
+"#;
+
+/// Same structure but CATEGORY changed, DESC removed, new field ADMIN-DATA added.
+const ELEMENTS_ARXML_B: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>Root</SHORT-NAME>
+      <AR-PACKAGES>
+        <AR-PACKAGE>
+          <SHORT-NAME>Components</SHORT-NAME>
+          <ELEMENTS>
+            <APPLICATION-SW-COMPONENT-TYPE>
+              <SHORT-NAME>MyComp</SHORT-NAME>
+              <CATEGORY>COMPOSITION</CATEGORY>
+            </APPLICATION-SW-COMPONENT-TYPE>
+          </ELEMENTS>
+        </AR-PACKAGE>
+      </AR-PACKAGES>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>
+"#;
+
+#[test]
+fn collect_element_fields_returns_direct_child_tags() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "a.arxml", ELEMENTS_ARXML_A);
+
+    let fields = collect_element_fields(&path, "Root/Components/MyComp");
+    let map: std::collections::HashMap<_, _> = fields.into_iter().collect();
+
+    assert_eq!(map.get("SHORT-NAME").map(|s| s.as_str()), Some("MyComp"));
+    assert_eq!(map.get("CATEGORY").map(|s| s.as_str()), Some("APPLICATION"));
+    assert_eq!(map.get("DESC").map(|s| s.as_str()), Some("Original description"));
+}
+
+#[test]
+fn collect_element_fields_unknown_path_returns_empty() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "a.arxml", ELEMENTS_ARXML_A);
+
+    let fields = collect_element_fields(&path, "Root/Components/DoesNotExist");
+    assert!(fields.is_empty());
+}
+
+#[test]
+fn cmd_diff_extended_identical_files_returns_true() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.arxml", ELEMENTS_ARXML_A);
+    let b = write_fixture(&dir, "b.arxml", ELEMENTS_ARXML_A);
+
+    assert!(cmd_diff_extended(&a, &b, None));
+}
+
+#[test]
+fn cmd_diff_extended_detects_changed_field() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.arxml", ELEMENTS_ARXML_A);
+    let b = write_fixture(&dir, "b.arxml", ELEMENTS_ARXML_B);
+
+    // CATEGORY changed, DESC removed -> differs
+    assert!(!cmd_diff_extended(&a, &b, None));
+}
+
+#[test]
+fn cmd_diff_extended_still_reports_added_removed_paths() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);    // Alpha, Beta, Gamma
+    let b = write_fixture(&dir, "b.arxml", FLAT_ARXML_AB); // Alpha, Beta only
+
+    assert!(!cmd_diff_extended(&a, &b, None));
 }
 

@@ -128,7 +128,7 @@ Compares the `AR-PACKAGE` and `ELEMENTS` structure of two ARXML files.
 The comparison is order-independent — only the set of paths matters, not their position in the file.
 
 ```
-arx diff <file1.arxml> <file2.arxml> [/filter/path]
+arx diff [-e] <file1.arxml> <file2.arxml> [/filter/path]
 ```
 
 Each difference is printed as a single coloured line:
@@ -136,12 +136,19 @@ Each difference is printed as a single coloured line:
 - <span style="color:red">**-** `/path/to/removed`</span> — present in `file1.arxml`, missing in `file2.arxml`
 - <span style="color:green">**+** `/path/to/added`</span> — present in `file2.arxml`, missing in `file1.arxml`
 
+With `-e`, elements that exist in both files are also compared field by field:
+
+- <span style="color:#cc0">**~** `/path/to/element`</span> — element exists in both files but fields differ
+  - <span style="color:red">**- CATEGORY:** `APPLICATION`</span>
+  - <span style="color:green">**+ CATEGORY:** `COMPOSITION`</span>
+
 Exits with code `0` if the files are identical, `1` if differences were found.
 
 **Options:**
 
 | Option | Description |
 |---|---|
+| `-e` | Extended mode: also compare direct child tag values of elements present in both files. |
 | `/filter/path` | Only compare paths under this AR-PACKAGE prefix. Can be specified with or without a leading `/`. |
 
 **Examples:**
@@ -150,8 +157,14 @@ Exits with code `0` if the files are identical, `1` if differences were found.
 # Compare full structure
 arx diff baseline.arxml updated.arxml
 
+# Extended: also compare field values of matching elements
+arx diff -e baseline.arxml updated.arxml
+
 # Compare only within /Root/Components
 arx diff baseline.arxml updated.arxml /Root/Components
+
+# Extended + filter
+arx diff -e baseline.arxml updated.arxml /Root/Components
 
 # Use in a script
 arx diff baseline.arxml updated.arxml && echo "no structural changes"
