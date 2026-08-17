@@ -461,6 +461,10 @@ pub fn cmd_diff(file_a: &str, file_b: &str, filter: Option<&str>) -> bool {
         return true;
     }
 
+    println!("{}--- {}{}", COLOR_RED, file_a, COLOR_RESET);
+    println!("{}+++ {}{}", COLOR_GREEN, file_b, COLOR_RESET);
+    println!();
+
     for path in &removed {
         println!("{}-{} {}{}", COLOR_RED, COLOR_RESET, COLOR_RED, path);
         print!("{}", COLOR_RESET);
