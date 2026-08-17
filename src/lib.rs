@@ -423,6 +423,55 @@ pub fn cmd_rm(input: &str, packages: &[String]) {
 }
 
 // ---------------------------------------------------------------------------
+// diff
+// ---------------------------------------------------------------------------
+
+const COLOR_RED: &str = "\x1b[31m";
+const COLOR_GREEN: &str = "\x1b[32m";
+const COLOR_RESET: &str = "\x1b[0m";
+
+/// Collect all AR-PACKAGE and ELEMENTS paths from an ARXML file as a sorted vec.
+pub fn collect_all_paths(path: &str) -> Vec<String> {
+    let mut paths = ls_collect(path, true, None, true);
+    paths.sort();
+    paths
+}
+
+/// Compare the AR-PACKAGE / ELEMENTS structure of two ARXML files and print
+/// coloured `+`/`-` lines for entries that differ.
+///
+/// Returns `true` if the files are identical, `false` if differences were found.
+pub fn cmd_diff(file_a: &str, file_b: &str) -> bool {
+    let paths_a: std::collections::HashSet<String> =
+        collect_all_paths(file_a).into_iter().collect();
+    let paths_b: std::collections::HashSet<String> =
+        collect_all_paths(file_b).into_iter().collect();
+
+    // Removed: in A but not in B
+    let mut removed: Vec<&String> = paths_a.difference(&paths_b).collect();
+    removed.sort();
+
+    // Added: in B but not in A
+    let mut added: Vec<&String> = paths_b.difference(&paths_a).collect();
+    added.sort();
+
+    if removed.is_empty() && added.is_empty() {
+        return true;
+    }
+
+    for path in &removed {
+        println!("{}-{} {}{}", COLOR_RED, COLOR_RESET, COLOR_RED, path);
+        print!("{}", COLOR_RESET);
+    }
+    for path in &added {
+        println!("{}+{} {}{}", COLOR_GREEN, COLOR_RESET, COLOR_GREEN, path);
+        print!("{}", COLOR_RESET);
+    }
+
+    false
+}
+
+// ---------------------------------------------------------------------------
 // Range finding
 // ---------------------------------------------------------------------------
 

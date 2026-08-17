@@ -122,6 +122,34 @@ The file is overwritten in-place. Remaining packages and elements are preserved 
 
 ---
 
+### `arx diff` — Diff AR-Package / Element structure
+
+Compares the `AR-PACKAGE` and `ELEMENTS` structure of two ARXML files.  
+The comparison is order-independent — only the set of paths matters, not their position in the file.
+
+```
+arx diff <a.arxml> <b.arxml>
+```
+
+Each difference is printed as a single coloured line:
+
+- <span style="color:red">**-** `/path/to/removed`</span> — present in `a.arxml`, missing in `b.arxml`
+- <span style="color:green">**+** `/path/to/added`</span> — present in `b.arxml`, missing in `a.arxml`
+
+Exits with code `0` if the files are identical, `1` if differences were found.
+
+**Examples:**
+
+```sh
+# Compare two model files
+arx diff baseline.arxml updated.arxml
+
+# Use in a script
+arx diff a.arxml b.arxml && echo "no structural changes"
+```
+
+---
+
 ## Installation
 
 Requires [Rust](https://rustup.rs/).
@@ -138,7 +166,7 @@ cargo install --git https://github.com/stante/arx-utils
 cargo install --path .
 ```
 
-Both commands install three binaries: `arx`, `arx-ls`, `arx-cp`, and `arx-rm`.
+Both commands install four binaries: `arx`, `arx-ls`, `arx-cp`, `arx-rm`, and `arx-diff`.
 
 ---
 

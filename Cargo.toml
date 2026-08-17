@@ -24,3 +24,7 @@ path = "src/bin/arx-cp.rs"
 [[bin]]
 name = "arx-rm"
 path = "src/bin/arx-rm.rs"
+
+[[bin]]
+name = "arx-diff"
+path = "src/bin/arx-diff.rs"

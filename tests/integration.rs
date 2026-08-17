@@ -3,8 +3,8 @@ use std::fs;
 use std::io::Write;
 
 use arx_utils::{
-    cmd_cp, cmd_rm, find_element_ranges, find_package_ranges, ls_collect, normalise_path,
-    parse_cp_args, parse_rm_args, CpGroup,
+    cmd_cp, cmd_diff, cmd_rm, collect_all_paths, find_element_ranges, find_package_ranges,
+    ls_collect, normalise_path, parse_cp_args, parse_rm_args, CpGroup,
 };
 use tempfile::TempDir;
 
@@ -594,4 +594,127 @@ fn cmd_rm_element_result_is_valid_arxml() {
     let names = ls_collect(&path, false, None, true);
     assert!(names.contains(&"/Root".to_string()));
     assert!(names.contains(&"/Root/Interfaces".to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// collect_all_paths / cmd_diff
+// ---------------------------------------------------------------------------
+
+/// FLAT_ARXML with only Alpha and Beta (Gamma removed) — used as "file B" in diff tests.
+const FLAT_ARXML_AB: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>Alpha</SHORT-NAME>
+    </AR-PACKAGE>
+    <AR-PACKAGE>
+      <SHORT-NAME>Beta</SHORT-NAME>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>
+"#;
+
+/// NESTED_ARXML variant: Root/Components has an extra element NewComp, MySRInterface removed.
+const NESTED_ARXML_MODIFIED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>Root</SHORT-NAME>
+      <AR-PACKAGES>
+        <AR-PACKAGE>
+          <SHORT-NAME>Components</SHORT-NAME>
+          <ELEMENTS>
+            <APPLICATION-SW-COMPONENT-TYPE>
+              <SHORT-NAME>MyComponent</SHORT-NAME>
+            </APPLICATION-SW-COMPONENT-TYPE>
+            <APPLICATION-SW-COMPONENT-TYPE>
+              <SHORT-NAME>NewComp</SHORT-NAME>
+            </APPLICATION-SW-COMPONENT-TYPE>
+          </ELEMENTS>
+        </AR-PACKAGE>
+        <AR-PACKAGE>
+          <SHORT-NAME>Interfaces</SHORT-NAME>
+        </AR-PACKAGE>
+      </AR-PACKAGES>
+    </AR-PACKAGE>
+    <AR-PACKAGE>
+      <SHORT-NAME>Types</SHORT-NAME>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>
+"#;
+
+#[test]
+fn collect_all_paths_returns_packages_and_elements() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let paths = collect_all_paths(&path);
+    assert!(paths.contains(&"/Root".to_string()));
+    assert!(paths.contains(&"/Root/Components".to_string()));
+    assert!(paths.contains(&"/Root/Components/MyComponent".to_string()));
+    assert!(paths.contains(&"/Root/Interfaces/MySRInterface".to_string()));
+    assert!(paths.contains(&"/Types".to_string()));
+}
+
+#[test]
+fn cmd_diff_identical_files_returns_true() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);
+    let b = write_fixture(&dir, "b.arxml", FLAT_ARXML);
+
+    assert!(cmd_diff(&a, &b));
+}
+
+#[test]
+fn cmd_diff_detects_removed_package() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);   // Alpha, Beta, Gamma
+    let b = write_fixture(&dir, "b.arxml", FLAT_ARXML_AB); // Alpha, Beta only
+
+    assert!(!cmd_diff(&a, &b), "files differ, should return false");
+}
+
+#[test]
+fn cmd_diff_detects_added_package() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.arxml", FLAT_ARXML_AB); // Alpha, Beta
+    let b = write_fixture(&dir, "b.arxml", FLAT_ARXML);    // Alpha, Beta, Gamma
+
+    assert!(!cmd_diff(&a, &b));
+}
+
+#[test]
+fn cmd_diff_detects_element_changes() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.arxml", NESTED_ARXML);
+    let b = write_fixture(&dir, "b.arxml", NESTED_ARXML_MODIFIED);
+
+    // MySRInterface removed, NewComp added — files differ
+    assert!(!cmd_diff(&a, &b));
+}
+
+#[test]
+fn cmd_diff_order_independent() {
+    // Same packages in different order must be considered identical.
+    let reversed = r#"<?xml version="1.0" encoding="UTF-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>Gamma</SHORT-NAME>
+    </AR-PACKAGE>
+    <AR-PACKAGE>
+      <SHORT-NAME>Beta</SHORT-NAME>
+    </AR-PACKAGE>
+    <AR-PACKAGE>
+      <SHORT-NAME>Alpha</SHORT-NAME>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>
+"#;
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);
+    let b = write_fixture(&dir, "b.arxml", reversed);
+
+    assert!(cmd_diff(&a, &b), "same packages in different order should be identical");
 }
