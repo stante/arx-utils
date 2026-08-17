@@ -128,7 +128,7 @@ Compares the `AR-PACKAGE` and `ELEMENTS` structure of two ARXML files.
 The comparison is order-independent — only the set of paths matters, not their position in the file.
 
 ```
-arx diff <file1.arxml> <file2.arxml>
+arx diff <file1.arxml> <file2.arxml> [/filter/path]
 ```
 
 Each difference is printed as a single coloured line:
@@ -138,11 +138,20 @@ Each difference is printed as a single coloured line:
 
 Exits with code `0` if the files are identical, `1` if differences were found.
 
+**Options:**
+
+| Option | Description |
+|---|---|
+| `/filter/path` | Only compare paths under this AR-PACKAGE prefix. Can be specified with or without a leading `/`. |
+
 **Examples:**
 
 ```sh
-# Compare two model files
+# Compare full structure
 arx diff baseline.arxml updated.arxml
+
+# Compare only within /Root/Components
+arx diff baseline.arxml updated.arxml /Root/Components
 
 # Use in a script
 arx diff baseline.arxml updated.arxml && echo "no structural changes"

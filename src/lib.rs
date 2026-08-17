@@ -431,21 +431,23 @@ const COLOR_GREEN: &str = "\x1b[32m";
 const COLOR_RESET: &str = "\x1b[0m";
 
 /// Collect all AR-PACKAGE and ELEMENTS paths from an ARXML file as a sorted vec.
-pub fn collect_all_paths(path: &str) -> Vec<String> {
-    let mut paths = ls_collect(path, true, None, true);
+/// If `filter` is given, only paths under that AR-PACKAGE prefix are returned.
+pub fn collect_all_paths(path: &str, filter: Option<&str>) -> Vec<String> {
+    let mut paths = ls_collect(path, true, filter, true);
     paths.sort();
     paths
 }
 
 /// Compare the AR-PACKAGE / ELEMENTS structure of two ARXML files and print
 /// coloured `+`/`-` lines for entries that differ.
+/// If `filter` is given, only paths under that AR-PACKAGE prefix are compared.
 ///
 /// Returns `true` if the files are identical, `false` if differences were found.
-pub fn cmd_diff(file_a: &str, file_b: &str) -> bool {
+pub fn cmd_diff(file_a: &str, file_b: &str, filter: Option<&str>) -> bool {
     let paths_a: std::collections::HashSet<String> =
-        collect_all_paths(file_a).into_iter().collect();
+        collect_all_paths(file_a, filter).into_iter().collect();
     let paths_b: std::collections::HashSet<String> =
-        collect_all_paths(file_b).into_iter().collect();
+        collect_all_paths(file_b, filter).into_iter().collect();
 
     // Removed: in A but not in B
     let mut removed: Vec<&String> = paths_a.difference(&paths_b).collect();

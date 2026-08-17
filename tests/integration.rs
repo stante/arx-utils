@@ -649,7 +649,7 @@ fn collect_all_paths_returns_packages_and_elements() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
 
-    let paths = collect_all_paths(&path);
+    let paths = collect_all_paths(&path, None);
     assert!(paths.contains(&"/Root".to_string()));
     assert!(paths.contains(&"/Root/Components".to_string()));
     assert!(paths.contains(&"/Root/Components/MyComponent".to_string()));
@@ -663,7 +663,7 @@ fn cmd_diff_identical_files_returns_true() {
     let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);
     let b = write_fixture(&dir, "b.arxml", FLAT_ARXML);
 
-    assert!(cmd_diff(&a, &b));
+    assert!(cmd_diff(&a, &b, None));
 }
 
 #[test]
@@ -672,7 +672,7 @@ fn cmd_diff_detects_removed_package() {
     let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);   // Alpha, Beta, Gamma
     let b = write_fixture(&dir, "b.arxml", FLAT_ARXML_AB); // Alpha, Beta only
 
-    assert!(!cmd_diff(&a, &b), "files differ, should return false");
+    assert!(!cmd_diff(&a, &b, None), "files differ, should return false");
 }
 
 #[test]
@@ -681,7 +681,7 @@ fn cmd_diff_detects_added_package() {
     let a = write_fixture(&dir, "a.arxml", FLAT_ARXML_AB); // Alpha, Beta
     let b = write_fixture(&dir, "b.arxml", FLAT_ARXML);    // Alpha, Beta, Gamma
 
-    assert!(!cmd_diff(&a, &b));
+    assert!(!cmd_diff(&a, &b, None));
 }
 
 #[test]
@@ -691,7 +691,7 @@ fn cmd_diff_detects_element_changes() {
     let b = write_fixture(&dir, "b.arxml", NESTED_ARXML_MODIFIED);
 
     // MySRInterface removed, NewComp added — files differ
-    assert!(!cmd_diff(&a, &b));
+    assert!(!cmd_diff(&a, &b, None));
 }
 
 #[test]
@@ -716,5 +716,42 @@ fn cmd_diff_order_independent() {
     let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);
     let b = write_fixture(&dir, "b.arxml", reversed);
 
-    assert!(cmd_diff(&a, &b), "same packages in different order should be identical");
+    assert!(cmd_diff(&a, &b, None), "same packages in different order should be identical");
 }
+
+#[test]
+fn cmd_diff_filter_limits_scope_to_subpackage() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.arxml", NESTED_ARXML);
+    let b = write_fixture(&dir, "b.arxml", NESTED_ARXML_MODIFIED);
+
+    // Without filter: differences exist (MySRInterface removed, NewComp added)
+    assert!(!cmd_diff(&a, &b, None));
+
+    // With filter /Root/Components: NewComp was added -> still differs
+    assert!(!cmd_diff(&a, &b, Some("/Root/Components")));
+
+    // With filter /Root/Interfaces: MySRInterface removed -> still differs
+    assert!(!cmd_diff(&a, &b, Some("/Root/Interfaces")));
+}
+
+#[test]
+fn cmd_diff_filter_ignores_differences_outside_scope() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.arxml", NESTED_ARXML);
+    let b = write_fixture(&dir, "b.arxml", NESTED_ARXML_MODIFIED);
+
+    // /Root/Components/MyComponent exists in both — within that scope no diff
+    assert!(cmd_diff(&a, &b, Some("/Root/Components/MyComponent")));
+}
+
+#[test]
+fn cmd_diff_filter_no_match_both_empty_is_identical() {
+    let dir = TempDir::new().unwrap();
+    let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);
+    let b = write_fixture(&dir, "b.arxml", FLAT_ARXML_AB);
+
+    // /NonExistent matches nothing in either file -> both empty sets -> identical
+    assert!(cmd_diff(&a, &b, Some("/NonExistent")));
+}
+
