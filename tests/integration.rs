@@ -3,9 +3,9 @@ use std::fs;
 use std::io::Write;
 
 use arx_utils::{
-    cmd_cp, cmd_diff, cmd_diff_extended, cmd_rm, collect_all_paths, collect_element_fields,
-    find_element_ranges, find_package_ranges, ls_collect, normalise_path, parse_cp_args,
-    parse_rm_args, CpGroup,
+    cmd_cp, cmd_diff, cmd_diff_extended, cmd_rm, collect_all_element_fields, collect_all_paths,
+    collect_element_fields, find_element_ranges, find_package_ranges, ls_collect, normalise_path,
+    parse_cp_args, parse_rm_args, CpGroup,
 };
 use tempfile::TempDir;
 
@@ -854,4 +854,18 @@ fn cmd_diff_extended_still_reports_added_removed_paths() {
 
     assert!(!cmd_diff_extended(&a, &b, None));
 }
+
+#[test]
+fn collect_all_element_fields_returns_all_elements_in_one_pass() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "a.arxml", ELEMENTS_ARXML_A);
+
+    let all = collect_all_element_fields(&path);
+
+    let fields = all.get("Root/Components/MyComp").expect("MyComp not found");
+    assert_eq!(fields.get("SHORT-NAME").map(|s| s.as_str()), Some("MyComp"));
+    assert_eq!(fields.get("CATEGORY").map(|s| s.as_str()), Some("APPLICATION"));
+    assert_eq!(fields.get("DESC").map(|s| s.as_str()), Some("Original description"));
+}
+
 

@@ -619,6 +619,144 @@ pub fn collect_element_fields(file: &str, element_path: &str) -> Vec<(String, St
 
 const COLOR_YELLOW: &str = "\x1b[33m";
 
+/// Collect direct child tag values for **all** elements in `<ELEMENTS>` blocks
+/// in a single streaming pass over the file.
+///
+/// Returns `HashMap<normalised_element_path, HashMap<tag_name, text_value>>`.
+pub fn collect_all_element_fields(file: &str) -> HashMap<String, HashMap<String, String>> {
+    let mut raw = Vec::new();
+    open_file(file).read_to_end(&mut raw).unwrap();
+    let cursor = Cursor::new(&raw);
+    let mut xml = Reader::from_reader(cursor);
+    xml.config_mut().trim_text(true);
+
+    let mut buf = Vec::new();
+    let mut pkg_stack: Vec<String> = Vec::new();
+    let mut depth: usize = 0;
+
+    let mut in_elements = false;
+    let mut elements_depth: usize = 0;
+    let mut element_tag_depth: usize = 0;
+    let mut element_path: Option<String> = None; // full path of current element
+    let mut field_depth: usize = 0;
+    let mut current_field: Option<String> = None;
+    let mut current_fields: HashMap<String, String> = HashMap::new();
+
+    let mut read_short_name = false;
+    let mut sn_is_element = false; // true when reading SHORT-NAME of an element tag
+
+    let mut result: HashMap<String, HashMap<String, String>> = HashMap::new();
+
+    loop {
+        let event = xml.read_event_into(&mut buf);
+        match event {
+            Ok(Event::Start(ref e)) => {
+                depth += 1;
+                let name = local_name_str(e.local_name().as_ref());
+
+                if let Some(ref _ep) = element_path {
+                    // Inside an element
+                    if field_depth == 0 && depth == element_tag_depth + 1 {
+                        field_depth = depth;
+                        current_field = Some(name.clone());
+                        if name == "SHORT-NAME" {
+                            read_short_name = true;
+                            sn_is_element = false; // treated as regular field here
+                        }
+                    }
+                    // deeper nesting — ignore text
+                } else if in_elements && depth == elements_depth + 1 && element_tag_depth == 0 {
+                    element_tag_depth = depth;
+                    current_fields = HashMap::new();
+                } else if in_elements && element_tag_depth > 0 && element_path.is_none()
+                    && name == "SHORT-NAME" && depth == element_tag_depth + 1
+                {
+                    read_short_name = true;
+                    sn_is_element = true;
+                } else if name == "ELEMENTS" && !in_elements {
+                    in_elements = true;
+                    elements_depth = depth;
+                } else if name == "SHORT-NAME" && !in_elements {
+                    read_short_name = true;
+                    sn_is_element = false;
+                }
+            }
+            Ok(Event::Text(ref e)) => {
+                let text = e.unescape().unwrap_or_default();
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    buf.clear();
+                    continue;
+                }
+
+                if read_short_name {
+                    read_short_name = false;
+                    if sn_is_element {
+                        // SHORT-NAME of an element tag — build its full path
+                        let pkg = pkg_stack.join("/");
+                        let full = format!("{}/{}", pkg, trimmed);
+                        element_path = Some(full.clone());
+                        current_fields.insert("SHORT-NAME".to_string(), trimmed.to_string());
+                    } else if element_path.is_some() && field_depth > 0 && depth == field_depth {
+                        // SHORT-NAME as a regular field inside the element (shouldn't happen
+                        // normally since sn_is_element=false only for pkg SHORT-NAMEs, but
+                        // guard anyway)
+                        current_fields.insert("SHORT-NAME".to_string(), trimmed.to_string());
+                        current_field = None;
+                        field_depth = 0;
+                    } else if !in_elements {
+                        pkg_stack.push(trimmed.to_string());
+                    }
+                } else if element_path.is_some() && field_depth > 0 && depth == field_depth {
+                    if let Some(ref tag) = current_field {
+                        current_fields.insert(tag.clone(), trimmed.to_string());
+                    }
+                    current_field = None;
+                    field_depth = 0;
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let name = local_name_str(e.local_name().as_ref());
+
+                if element_path.is_some() {
+                    if field_depth > 0 && depth == field_depth {
+                        // Close a direct child tag with no text — record empty
+                        if let Some(ref tag) = current_field {
+                            current_fields.entry(tag.clone()).or_insert_with(String::new);
+                        }
+                        current_field = None;
+                        field_depth = 0;
+                    } else if depth == element_tag_depth {
+                        // Closing the element itself — store and reset
+                        let path = element_path.take().unwrap();
+                        result.insert(path, std::mem::take(&mut current_fields));
+                        element_tag_depth = 0;
+                    }
+                } else if in_elements && element_tag_depth > 0 && depth == element_tag_depth {
+                    // Element with no SHORT-NAME found — skip
+                    element_tag_depth = 0;
+                } else if name == "ELEMENTS" && in_elements && depth == elements_depth {
+                    in_elements = false;
+                    elements_depth = 0;
+                } else if name == "AR-PACKAGE" && !in_elements {
+                    pkg_stack.pop();
+                }
+
+                depth -= 1;
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => {
+                eprintln!("XML parse error: {}", e);
+                std::process::exit(1);
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    result
+}
+
 /// Extended diff: in addition to added/removed paths, compare the direct child
 /// tags of elements that exist in both files and report changed field values.
 pub fn cmd_diff_extended(file_a: &str, file_b: &str, filter: Option<&str>) -> bool {
@@ -630,29 +768,26 @@ pub fn cmd_diff_extended(file_a: &str, file_b: &str, filter: Option<&str>) -> bo
     let mut added: Vec<&String> = paths_b.difference(&paths_a).collect();
     added.sort();
 
-    // Paths present in both — check field-level differences
-    let mut common: Vec<&String> = paths_a.intersection(&paths_b).collect();
-    common.sort();
+    // Paths present in both — check field-level differences using a single pass each.
+    let common: HashSet<&String> = paths_a.intersection(&paths_b).collect();
+
+    let all_fields_a = collect_all_element_fields(file_a);
+    let all_fields_b = collect_all_element_fields(file_b);
 
     let mut field_diffs: Vec<(String, Vec<(String, String, String)>)> = Vec::new();
-    for path in &common {
+    let mut common_sorted: Vec<&&String> = common.iter().collect();
+    common_sorted.sort();
+
+    for path in common_sorted {
         let norm = normalise_path(path);
-        // Only compare element paths (those that were collected via show_elements=true
-        // and have a parent package — heuristic: path depth >= 2 after normalising)
-        if norm.split('/').count() < 2 {
-            continue;
-        }
-        let fields_a: HashMap<String, String> =
-            collect_element_fields(file_a, &norm).into_iter().collect();
-        let fields_b: HashMap<String, String> =
-            collect_element_fields(file_b, &norm).into_iter().collect();
+        let fields_a = all_fields_a.get(&norm).cloned().unwrap_or_default();
+        let fields_b = all_fields_b.get(&norm).cloned().unwrap_or_default();
 
         if fields_a.is_empty() && fields_b.is_empty() {
             continue;
         }
 
-        let all_tags: HashSet<&String> =
-            fields_a.keys().chain(fields_b.keys()).collect();
+        let all_tags: HashSet<&String> = fields_a.keys().chain(fields_b.keys()).collect();
         let mut changes: Vec<(String, String, String)> = Vec::new();
         let mut tags_sorted: Vec<&&String> = all_tags.iter().collect();
         tags_sorted.sort();
