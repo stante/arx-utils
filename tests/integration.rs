@@ -664,7 +664,7 @@ fn cmd_diff_identical_files_returns_true() {
     let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);
     let b = write_fixture(&dir, "b.arxml", FLAT_ARXML);
 
-    assert!(cmd_diff(&a, &b, None));
+    assert!(cmd_diff(&a, &b, None, &arx_utils::COLORS_OFF));
 }
 
 #[test]
@@ -673,7 +673,7 @@ fn cmd_diff_detects_removed_package() {
     let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);   // Alpha, Beta, Gamma
     let b = write_fixture(&dir, "b.arxml", FLAT_ARXML_AB); // Alpha, Beta only
 
-    assert!(!cmd_diff(&a, &b, None), "files differ, should return false");
+    assert!(!cmd_diff(&a, &b, None, &arx_utils::COLORS_OFF), "files differ, should return false");
 }
 
 #[test]
@@ -682,7 +682,7 @@ fn cmd_diff_detects_added_package() {
     let a = write_fixture(&dir, "a.arxml", FLAT_ARXML_AB); // Alpha, Beta
     let b = write_fixture(&dir, "b.arxml", FLAT_ARXML);    // Alpha, Beta, Gamma
 
-    assert!(!cmd_diff(&a, &b, None));
+    assert!(!cmd_diff(&a, &b, None, &arx_utils::COLORS_OFF));
 }
 
 #[test]
@@ -692,7 +692,7 @@ fn cmd_diff_detects_element_changes() {
     let b = write_fixture(&dir, "b.arxml", NESTED_ARXML_MODIFIED);
 
     // MySRInterface removed, NewComp added — files differ
-    assert!(!cmd_diff(&a, &b, None));
+    assert!(!cmd_diff(&a, &b, None, &arx_utils::COLORS_OFF));
 }
 
 #[test]
@@ -717,7 +717,7 @@ fn cmd_diff_order_independent() {
     let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);
     let b = write_fixture(&dir, "b.arxml", reversed);
 
-    assert!(cmd_diff(&a, &b, None), "same packages in different order should be identical");
+    assert!(cmd_diff(&a, &b, None, &arx_utils::COLORS_OFF), "same packages in different order should be identical");
 }
 
 #[test]
@@ -727,13 +727,13 @@ fn cmd_diff_filter_limits_scope_to_subpackage() {
     let b = write_fixture(&dir, "b.arxml", NESTED_ARXML_MODIFIED);
 
     // Without filter: differences exist (MySRInterface removed, NewComp added)
-    assert!(!cmd_diff(&a, &b, None));
+    assert!(!cmd_diff(&a, &b, None, &arx_utils::COLORS_OFF));
 
     // With filter /Root/Components: NewComp was added -> still differs
-    assert!(!cmd_diff(&a, &b, Some("/Root/Components")));
+    assert!(!cmd_diff(&a, &b, Some("/Root/Components"), &arx_utils::COLORS_OFF));
 
     // With filter /Root/Interfaces: MySRInterface removed -> still differs
-    assert!(!cmd_diff(&a, &b, Some("/Root/Interfaces")));
+    assert!(!cmd_diff(&a, &b, Some("/Root/Interfaces"), &arx_utils::COLORS_OFF));
 }
 
 #[test]
@@ -743,7 +743,7 @@ fn cmd_diff_filter_ignores_differences_outside_scope() {
     let b = write_fixture(&dir, "b.arxml", NESTED_ARXML_MODIFIED);
 
     // /Root/Components/MyComponent exists in both — within that scope no diff
-    assert!(cmd_diff(&a, &b, Some("/Root/Components/MyComponent")));
+    assert!(cmd_diff(&a, &b, Some("/Root/Components/MyComponent"), &arx_utils::COLORS_OFF));
 }
 
 #[test]
@@ -753,7 +753,7 @@ fn cmd_diff_filter_no_match_both_empty_is_identical() {
     let b = write_fixture(&dir, "b.arxml", FLAT_ARXML_AB);
 
     // /NonExistent matches nothing in either file -> both empty sets -> identical
-    assert!(cmd_diff(&a, &b, Some("/NonExistent")));
+    assert!(cmd_diff(&a, &b, Some("/NonExistent"), &arx_utils::COLORS_OFF));
 }
 
 // ---------------------------------------------------------------------------
@@ -833,7 +833,7 @@ fn cmd_diff_extended_identical_files_returns_true() {
     let a = write_fixture(&dir, "a.arxml", ELEMENTS_ARXML_A);
     let b = write_fixture(&dir, "b.arxml", ELEMENTS_ARXML_A);
 
-    assert!(cmd_diff_extended(&a, &b, None));
+    assert!(cmd_diff_extended(&a, &b, None, &arx_utils::COLORS_OFF));
 }
 
 #[test]
@@ -843,7 +843,7 @@ fn cmd_diff_extended_detects_changed_field() {
     let b = write_fixture(&dir, "b.arxml", ELEMENTS_ARXML_B);
 
     // CATEGORY changed, DESC removed -> differs
-    assert!(!cmd_diff_extended(&a, &b, None));
+    assert!(!cmd_diff_extended(&a, &b, None, &arx_utils::COLORS_OFF));
 }
 
 #[test]
@@ -852,7 +852,7 @@ fn cmd_diff_extended_still_reports_added_removed_paths() {
     let a = write_fixture(&dir, "a.arxml", FLAT_ARXML);    // Alpha, Beta, Gamma
     let b = write_fixture(&dir, "b.arxml", FLAT_ARXML_AB); // Alpha, Beta only
 
-    assert!(!cmd_diff_extended(&a, &b, None));
+    assert!(!cmd_diff_extended(&a, &b, None, &arx_utils::COLORS_OFF));
 }
 
 #[test]
@@ -867,5 +867,6 @@ fn collect_all_element_fields_returns_all_elements_in_one_pass() {
     assert_eq!(fields.get("CATEGORY").map(|s| s.as_str()), Some("APPLICATION"));
     assert_eq!(fields.get("DESC").map(|s| s.as_str()), Some("Original description"));
 }
+
 
 

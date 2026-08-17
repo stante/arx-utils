@@ -149,6 +149,7 @@ Exits with code `0` if the files are identical, `1` if differences were found.
 | Option | Description |
 |---|---|
 | `-e` | Extended mode: also compare direct child tag values of elements present in both files. |
+| `--color` | Force coloured output even when piping to a file or another program. By default colour is only enabled when writing to a terminal. |
 | `/filter/path` | Only compare paths under this AR-PACKAGE prefix. Can be specified with or without a leading `/`. |
 
 **Examples:**
