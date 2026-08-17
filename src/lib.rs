@@ -426,9 +426,26 @@ pub fn cmd_rm(input: &str, packages: &[String]) {
 // diff
 // ---------------------------------------------------------------------------
 
-const COLOR_RED: &str = "\x1b[31m";
-const COLOR_GREEN: &str = "\x1b[32m";
-const COLOR_RESET: &str = "\x1b[0m";
+pub struct Colors {
+    pub red: &'static str,
+    pub green: &'static str,
+    pub yellow: &'static str,
+    pub reset: &'static str,
+}
+
+pub const COLORS_ON: Colors = Colors {
+    red:    "\x1b[31m",
+    green:  "\x1b[32m",
+    yellow: "\x1b[33m",
+    reset:  "\x1b[0m",
+};
+
+pub const COLORS_OFF: Colors = Colors {
+    red:    "",
+    green:  "",
+    yellow: "",
+    reset:  "",
+};
 
 /// Collect all AR-PACKAGE and ELEMENTS paths from an ARXML file as a sorted vec.
 /// If `filter` is given, only paths under that AR-PACKAGE prefix are returned.
@@ -443,7 +460,7 @@ pub fn collect_all_paths(path: &str, filter: Option<&str>) -> Vec<String> {
 /// If `filter` is given, only paths under that AR-PACKAGE prefix are compared.
 ///
 /// Returns `true` if the files are identical, `false` if differences were found.
-pub fn cmd_diff(file_a: &str, file_b: &str, filter: Option<&str>) -> bool {
+pub fn cmd_diff(file_a: &str, file_b: &str, filter: Option<&str>, c: &Colors) -> bool {
     let paths_a: std::collections::HashSet<String> =
         collect_all_paths(file_a, filter).into_iter().collect();
     let paths_b: std::collections::HashSet<String> =
@@ -461,17 +478,17 @@ pub fn cmd_diff(file_a: &str, file_b: &str, filter: Option<&str>) -> bool {
         return true;
     }
 
-    println!("{}--- {}{}", COLOR_RED, file_a, COLOR_RESET);
-    println!("{}+++ {}{}", COLOR_GREEN, file_b, COLOR_RESET);
+    println!("{}--- {}{}", c.red, file_a, c.reset);
+    println!("{}+++ {}{}", c.green, file_b, c.reset);
     println!();
 
     for path in &removed {
-        println!("{}-{} {}{}", COLOR_RED, COLOR_RESET, COLOR_RED, path);
-        print!("{}", COLOR_RESET);
+        println!("{}-{} {}{}", c.red, c.reset, c.red, path);
+        print!("{}", c.reset);
     }
     for path in &added {
-        println!("{}+{} {}{}", COLOR_GREEN, COLOR_RESET, COLOR_GREEN, path);
-        print!("{}", COLOR_RESET);
+        println!("{}+{} {}{}", c.green, c.reset, c.green, path);
+        print!("{}", c.reset);
     }
 
     false
@@ -617,8 +634,6 @@ pub fn collect_element_fields(file: &str, element_path: &str) -> Vec<(String, St
     results
 }
 
-const COLOR_YELLOW: &str = "\x1b[33m";
-
 /// Collect direct child tag values for **all** elements in `<ELEMENTS>` blocks
 /// in a single streaming pass over the file.
 ///
@@ -759,7 +774,7 @@ pub fn collect_all_element_fields(file: &str) -> HashMap<String, HashMap<String,
 
 /// Extended diff: in addition to added/removed paths, compare the direct child
 /// tags of elements that exist in both files and report changed field values.
-pub fn cmd_diff_extended(file_a: &str, file_b: &str, filter: Option<&str>) -> bool {
+pub fn cmd_diff_extended(file_a: &str, file_b: &str, filter: Option<&str>, c: &Colors) -> bool {
     let paths_a: HashSet<String> = collect_all_paths(file_a, filter).into_iter().collect();
     let paths_b: HashSet<String> = collect_all_paths(file_b, filter).into_iter().collect();
 
@@ -809,29 +824,29 @@ pub fn cmd_diff_extended(file_a: &str, file_b: &str, filter: Option<&str>) -> bo
         return true;
     }
 
-    println!("{}--- {}{}", COLOR_RED, file_a, COLOR_RESET);
-    println!("{}+++ {}{}", COLOR_GREEN, file_b, COLOR_RESET);
+    println!("{}--- {}{}", c.red, file_a, c.reset);
+    println!("{}+++ {}{}", c.green, file_b, c.reset);
     println!();
 
     for path in &removed {
-        println!("{}-{} {}{}", COLOR_RED, COLOR_RESET, COLOR_RED, path);
-        print!("{}", COLOR_RESET);
+        println!("{}-{} {}{}", c.red, c.reset, c.red, path);
+        print!("{}", c.reset);
     }
     for path in &added {
-        println!("{}+{} {}{}", COLOR_GREEN, COLOR_RESET, COLOR_GREEN, path);
-        print!("{}", COLOR_RESET);
+        println!("{}+{} {}{}", c.green, c.reset, c.green, path);
+        print!("{}", c.reset);
     }
     for (path, changes) in &field_diffs {
-        println!("{}~{} {}{}", COLOR_YELLOW, COLOR_RESET, COLOR_YELLOW, path);
-        print!("{}", COLOR_RESET);
+        println!("{}~{} {}{}", c.yellow, c.reset, c.yellow, path);
+        print!("{}", c.reset);
         for (tag, old, new) in changes {
             if old.is_empty() {
-                println!("{}  + {}: {}{}", COLOR_GREEN, tag, new, COLOR_RESET);
+                println!("{}  + {}: {}{}", c.green, tag, new, c.reset);
             } else if new.is_empty() {
-                println!("{}  - {}: {}{}", COLOR_RED, tag, old, COLOR_RESET);
+                println!("{}  - {}: {}{}", c.red, tag, old, c.reset);
             } else {
-                println!("{}  - {}: {}{}", COLOR_RED, tag, old, COLOR_RESET);
-                println!("{}  + {}: {}{}", COLOR_GREEN, tag, new, COLOR_RESET);
+                println!("{}  - {}: {}{}", c.red, tag, old, c.reset);
+                println!("{}  + {}: {}{}", c.green, tag, new, c.reset);
             }
         }
     }
