@@ -236,6 +236,41 @@ fn ls_show_elements_recursive_includes_all_elements() {
     assert!(result.contains(&"/Root/Interfaces/MySRInterface".to_string()));
 }
 
+#[test]
+fn ls_show_elements_without_recursive_does_not_include_sub_package_elements() {
+    // Regression: arx ls -e /Root must NOT show elements from /Root/Components
+    // or /Root/Interfaces unless -R is also given.
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, true, Some("/Root"), false);
+    assert!(
+        !result.contains(&"/Root/Components/MyComponent".to_string()),
+        "Without -R, elements from sub-packages must not appear: {:?}", result
+    );
+    assert!(
+        !result.contains(&"/Root/Interfaces/MySRInterface".to_string()),
+        "Without -R, elements from sub-packages must not appear: {:?}", result
+    );
+}
+
+#[test]
+fn ls_show_elements_with_recursive_includes_sub_package_elements() {
+    // -e -R /Root must still show elements from all descendant packages.
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, true, Some("/Root"), true);
+    assert!(
+        result.contains(&"/Root/Components/MyComponent".to_string()),
+        "With -R, elements from sub-packages must appear: {:?}", result
+    );
+    assert!(
+        result.contains(&"/Root/Interfaces/MySRInterface".to_string()),
+        "With -R, elements from sub-packages must appear: {:?}", result
+    );
+}
+
 // ---------------------------------------------------------------------------
 // find_package_ranges
 // ---------------------------------------------------------------------------

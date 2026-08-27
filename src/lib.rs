@@ -125,8 +125,8 @@ pub fn ls_collect(path: &str, show_elements: bool, filter: Option<&str>, recursi
                         // Element is a direct child of package_stack's current package.
                         // Print it when the parent package would be visible:
                         // - in recursive mode: parent just needs to be under filter
-                        // - in non-recursive mode: parent must be at exactly filter_depth
-                        //   (i.e. the filtered package itself, or top-level if no filter)
+                        // - in non-recursive mode: parent must be exactly the filter package
+                        //   (or a top-level package if no filter)
                         let parent_depth = package_stack.len();
                         let element_visible = match filter.as_deref() {
                             None => {
@@ -139,7 +139,7 @@ pub fn ls_collect(path: &str, show_elements: bool, filter: Option<&str>, recursi
                                     || parent.starts_with(&format!("{}/", filter_with_slash));
                                 if !under { false }
                                 else if recursive { true }
-                                else { parent_depth == filter_depth + 1 || parent == filter_with_slash }
+                                else { parent == filter_with_slash }
                             }
                         };
                         if element_visible {
