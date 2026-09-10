@@ -38,7 +38,7 @@ tests/
 ## Commands
 
 ### `arx ls [-e] [-R] [-x <path>]... [/filter] <file.arxml>`
-Lists AR-PACKAGE paths. `-e` includes ELEMENTS entries, `-R` recurses into sub-packages, `-x <path>` excludes a package (and everything under it) and may be repeated, `/filter` limits output to a path prefix.
+Lists AR-PACKAGE paths. `-e` includes ELEMENTS entries, `-R` recurses into sub-packages, `-x <path>` excludes a package (and everything under it, `*` wildcard supported) and may be repeated, `/filter` limits output to a path prefix.
 
 ### `arx cp <file.arxml> <pkg>... --into <out.arxml> [--rest <rest.arxml>]`
 Copies AR-PACKAGE blocks into output files. `--into` can be repeated. `--rest` collects all unmatched top-level packages.

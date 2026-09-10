@@ -62,6 +62,34 @@ const NESTED_ARXML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </AUTOSAR>
 "#;
 
+/// ARXML with several similarly-named sibling/nested packages, used to
+/// exercise wildcard exclude patterns.
+const WILDCARD_ARXML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>ComponentTypes</SHORT-NAME>
+      <AR-PACKAGES>
+        <AR-PACKAGE>
+          <SHORT-NAME>DummyA</SHORT-NAME>
+          <AR-PACKAGES>
+            <AR-PACKAGE>
+              <SHORT-NAME>Sub</SHORT-NAME>
+            </AR-PACKAGE>
+          </AR-PACKAGES>
+        </AR-PACKAGE>
+        <AR-PACKAGE>
+          <SHORT-NAME>DummyB</SHORT-NAME>
+        </AR-PACKAGE>
+        <AR-PACKAGE>
+          <SHORT-NAME>Real</SHORT-NAME>
+        </AR-PACKAGE>
+      </AR-PACKAGES>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>
+"#;
+
 /// Write content to a named file inside `dir` and return the full path string.
 fn write_fixture(dir: &TempDir, name: &str, content: &str) -> String {
     let path = dir.path().join(name);
@@ -249,6 +277,37 @@ fn ls_exclude_parent_package_also_hides_children() {
 
     let result = ls_collect(&path, false, None, true, &[s("/Root")]);
     assert_eq!(result, vec!["/Types"]);
+}
+
+#[test]
+fn ls_exclude_wildcard_matches_multiple_packages() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
+
+    let result = ls_collect(&path, false, None, true, &[s("/ComponentTypes/Dummy*")]);
+    assert_eq!(result, vec!["/ComponentTypes", "/ComponentTypes/Real"]);
+}
+
+#[test]
+fn ls_exclude_wildcard_also_hides_nested_descendants() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
+
+    // DummyA/Sub must disappear too, even though the wildcard pattern only
+    // directly matches "DummyA".
+    let result = ls_collect(&path, false, None, true, &[s("ComponentTypes/Dummy*")]);
+    assert!(!result.contains(&"/ComponentTypes/DummyA/Sub".to_string()));
+}
+
+#[test]
+fn ls_exclude_wildcard_no_match_returns_everything() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
+
+    let without_exclude = ls_collect(&path, false, None, true, &[]);
+    let with_non_matching_exclude =
+        ls_collect(&path, false, None, true, &[s("/ComponentTypes/Nope*")]);
+    assert_eq!(without_exclude, with_non_matching_exclude);
 }
 
 #[test]

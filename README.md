@@ -32,7 +32,15 @@ arx ls [-e] [-R] [-x <path>]... [/filter/path] <file.arxml>
 |---|---|
 | `-e` | Also show `ELEMENTS` entries (e.g. component names) inside packages |
 | `-R` | Recursive — show all descendants, not just direct children |
-| `-x <path>` | Exclude this `AR-PACKAGE` (and everything under it) from the output. Repeatable |
+| `-x <path>` | Exclude this `AR-PACKAGE` (and everything under it) from the output. Supports `*` as a wildcard and may be repeated |
+
+`-x` patterns support `*` as a wildcard matching any sequence of characters
+(including `/`), so a pattern doesn't have to name an exact package — e.g.
+`/ComponentTypes/Dummy*` excludes every package under `/ComponentTypes` whose
+name starts with `Dummy`, along with all of their descendants. Quote the
+pattern (e.g. `'/ComponentTypes/Dummy*'`) on shells that would otherwise
+expand `*` themselves.
+
 | `/filter/path` | Only show packages under this AUTOSAR path prefix |
 
 **Examples:**
@@ -52,6 +60,9 @@ arx ls -R -e /Root/Components model.arxml
 
 # List everything recursively, but skip /Root/Components entirely
 arx ls -R -x /Root/Components model.arxml
+
+# Exclude all packages under /ComponentTypes whose name starts with "Dummy"
+arx ls -R -x /ComponentTypes/Dummy* model.arxml
 ```
 
 ---

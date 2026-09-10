@@ -214,13 +214,51 @@ fn should_print(full_path: &str, filter: Option<&str>, filter_depth: usize, recu
     path_depth == filter_depth + 1
 }
 
-/// Returns true if `full_path` is excluded, i.e. it equals one of the
-/// (normalised) `excludes` paths or is nested underneath one of them.
+/// Returns true if `full_path` is excluded by one of the (normalised)
+/// `excludes` patterns. A pattern excludes a path if it matches the path
+/// itself, or any of its ancestor package paths (so excluding a package
+/// also excludes everything nested underneath it). Patterns may contain
+/// `*` as a wildcard matching any sequence of characters (including `/`),
+/// e.g. `ComponentTypes/Dummy*`.
 fn is_excluded(full_path: &str, excludes: &[String]) -> bool {
-    excludes.iter().any(|ex| {
-        let ex_with_slash = format!("/{}", ex);
-        full_path == ex_with_slash || full_path.starts_with(&format!("{}/", ex_with_slash))
+    let trimmed = full_path.trim_start_matches('/');
+    let segments: Vec<&str> = trimmed.split('/').collect();
+    excludes.iter().any(|pattern| {
+        (1..=segments.len()).any(|i| wildcard_match(pattern, &segments[..i].join("/")))
     })
+}
+
+/// Simple shell-style wildcard match: `*` in `pattern` matches any sequence
+/// of characters (including none, and including `/`). All other characters
+/// must match literally. No other wildcard syntax (e.g. `?`, `[abc]`) is
+/// supported.
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    let (mut pi, mut ti) = (0usize, 0usize);
+    let mut star: Option<usize> = None;
+    let mut match_start = 0usize;
+
+    while ti < t.len() {
+        if pi < p.len() && p[pi] == t[ti] {
+            pi += 1;
+            ti += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some(pi);
+            match_start = ti;
+            pi += 1;
+        } else if let Some(s) = star {
+            pi = s + 1;
+            match_start += 1;
+            ti = match_start;
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == '*' {
+        pi += 1;
+    }
+    pi == p.len()
 }
 
 // ---------------------------------------------------------------------------
