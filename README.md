@@ -23,7 +23,7 @@ arx <command> [args...]
 Lists all `AR-PACKAGE` paths in an ARXML file.
 
 ```
-arx ls [-e] [-R] [/filter/path] <file.arxml>
+arx ls [-e] [-R] [-x <path>]... [/filter/path] <file.arxml>
 ```
 
 **Options:**
@@ -32,6 +32,7 @@ arx ls [-e] [-R] [/filter/path] <file.arxml>
 |---|---|
 | `-e` | Also show `ELEMENTS` entries (e.g. component names) inside packages |
 | `-R` | Recursive — show all descendants, not just direct children |
+| `-x <path>` | Exclude this `AR-PACKAGE` (and everything under it) from the output. Repeatable |
 | `/filter/path` | Only show packages under this AUTOSAR path prefix |
 
 **Examples:**
@@ -48,6 +49,9 @@ arx ls /Root/Components model.arxml
 
 # List everything under /Root/Components including elements
 arx ls -R -e /Root/Components model.arxml
+
+# List everything recursively, but skip /Root/Components entirely
+arx ls -R -x /Root/Components model.arxml
 ```
 
 ---

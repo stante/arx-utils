@@ -59,16 +59,23 @@ pub fn write_arxml_footer<W: Write>(out: &mut BufWriter<W>) {
 // ls
 // ---------------------------------------------------------------------------
 
-pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>, recursive: bool) {
-    for line in ls_collect(path, show_elements, filter, recursive) {
+pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>, recursive: bool, excludes: &[String]) {
+    for line in ls_collect(path, show_elements, filter, recursive, excludes) {
         println!("{}", line);
     }
 }
 
 /// Core logic of `ls`: returns the list of paths that would be printed.
 /// Separated from `cmd_ls` so it can be called in tests without capturing stdout.
-pub fn ls_collect(path: &str, show_elements: bool, filter: Option<&str>, recursive: bool) -> Vec<String> {
+pub fn ls_collect(
+    path: &str,
+    show_elements: bool,
+    filter: Option<&str>,
+    recursive: bool,
+    excludes: &[String],
+) -> Vec<String> {
     let filter = filter.map(|f| normalise_path(f));
+    let excludes: Vec<String> = excludes.iter().map(|e| normalise_path(e)).collect();
     // Depth of the filter path (0 = no filter, 1 = /Root, 2 = /Root/Components, ...)
     let filter_depth = filter.as_deref().map(|f| f.split('/').count()).unwrap_or(0);
 
@@ -142,14 +149,16 @@ pub fn ls_collect(path: &str, show_elements: bool, filter: Option<&str>, recursi
                                 else { parent == filter_with_slash }
                             }
                         };
-                        if element_visible {
+                        if element_visible && !is_excluded(&full, &excludes) {
                             results.push(full);
                         }
                         element_tag_depth = 0;
                     } else {
                         package_stack.push(short_name);
                         let full = format!("/{}", package_stack.join("/"));
-                        if should_print(&full, filter.as_deref(), filter_depth, recursive) {
+                        if should_print(&full, filter.as_deref(), filter_depth, recursive)
+                            && !is_excluded(&full, &excludes)
+                        {
                             results.push(full);
                         }
                     }
@@ -203,6 +212,15 @@ fn should_print(full_path: &str, filter: Option<&str>, filter_depth: usize, recu
     // Non-recursive: only print at exactly filter_depth + 1
     let path_depth = full_path.trim_start_matches('/').split('/').count();
     path_depth == filter_depth + 1
+}
+
+/// Returns true if `full_path` is excluded, i.e. it equals one of the
+/// (normalised) `excludes` paths or is nested underneath one of them.
+fn is_excluded(full_path: &str, excludes: &[String]) -> bool {
+    excludes.iter().any(|ex| {
+        let ex_with_slash = format!("/{}", ex);
+        full_path == ex_with_slash || full_path.starts_with(&format!("{}/", ex_with_slash))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -450,7 +468,7 @@ pub const COLORS_OFF: Colors = Colors {
 /// Collect all AR-PACKAGE and ELEMENTS paths from an ARXML file as a sorted vec.
 /// If `filter` is given, only paths under that AR-PACKAGE prefix are returned.
 pub fn collect_all_paths(path: &str, filter: Option<&str>) -> Vec<String> {
-    let mut paths = ls_collect(path, true, filter, true);
+    let mut paths = ls_collect(path, true, filter, true, &[]);
     paths.sort();
     paths
 }

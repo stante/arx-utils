@@ -163,7 +163,7 @@ fn ls_flat_no_filter_no_recursive() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
 
-    let result = ls_collect(&path, false, None, false);
+    let result = ls_collect(&path, false, None, false, &[]);
     assert_eq!(result, vec!["/Alpha", "/Beta", "/Gamma"]);
 }
 
@@ -172,7 +172,7 @@ fn ls_nested_no_filter_non_recursive_shows_only_toplevel() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
 
-    let result = ls_collect(&path, false, None, false);
+    let result = ls_collect(&path, false, None, false, &[]);
     // Without -R, only direct children of the root are shown.
     assert_eq!(result, vec!["/Root", "/Types"]);
 }
@@ -182,7 +182,7 @@ fn ls_nested_recursive_shows_all_packages() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
 
-    let result = ls_collect(&path, false, None, true);
+    let result = ls_collect(&path, false, None, true, &[]);
     assert_eq!(result, vec!["/Root", "/Root/Components", "/Root/Interfaces", "/Types"]);
 }
 
@@ -191,7 +191,7 @@ fn ls_filter_shows_direct_children_only() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
 
-    let result = ls_collect(&path, false, Some("/Root"), false);
+    let result = ls_collect(&path, false, Some("/Root"), false, &[]);
     assert_eq!(result, vec!["/Root/Components", "/Root/Interfaces"]);
 }
 
@@ -202,7 +202,7 @@ fn ls_filter_recursive_shows_root_and_all_descendants() {
 
     // With -R and filter /Root, the filter path itself is included together with
     // all of its descendants.
-    let result = ls_collect(&path, false, Some("/Root"), true);
+    let result = ls_collect(&path, false, Some("/Root"), true, &[]);
     assert_eq!(result, vec!["/Root", "/Root/Components", "/Root/Interfaces"]);
 }
 
@@ -211,8 +211,65 @@ fn ls_filter_non_matching_returns_empty() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
 
-    let result = ls_collect(&path, false, Some("/DoesNotExist"), true);
+    let result = ls_collect(&path, false, Some("/DoesNotExist"), true, &[]);
     assert!(result.is_empty());
+}
+
+#[test]
+fn ls_exclude_top_level_package() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    let result = ls_collect(&path, false, None, false, &[s("/Beta")]);
+    assert_eq!(result, vec!["/Alpha", "/Gamma"]);
+}
+
+#[test]
+fn ls_exclude_without_leading_slash_is_normalised() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    let result = ls_collect(&path, false, None, false, &[s("Beta")]);
+    assert_eq!(result, vec!["/Alpha", "/Gamma"]);
+}
+
+#[test]
+fn ls_exclude_nested_package_hides_it_and_its_descendants() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, false, None, true, &[s("/Root/Components")]);
+    assert_eq!(result, vec!["/Root", "/Root/Interfaces", "/Types"]);
+}
+
+#[test]
+fn ls_exclude_parent_package_also_hides_children() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, false, None, true, &[s("/Root")]);
+    assert_eq!(result, vec!["/Types"]);
+}
+
+#[test]
+fn ls_exclude_multiple_packages() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    let result = ls_collect(&path, false, None, false, &[s("/Alpha"), s("/Gamma")]);
+    assert_eq!(result, vec!["/Beta"]);
+}
+
+#[test]
+fn ls_exclude_also_hides_elements_underneath() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, true, None, true, &[s("/Root/Components")]);
+    assert_eq!(
+        result,
+        vec!["/Root", "/Root/Interfaces", "/Root/Interfaces/MySRInterface", "/Types"]
+    );
 }
 
 #[test]
@@ -221,7 +278,7 @@ fn ls_show_elements_includes_element_names() {
     let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
 
     // -e with filter /Root/Components, non-recursive: should show the component name.
-    let result = ls_collect(&path, true, Some("/Root/Components"), false);
+    let result = ls_collect(&path, true, Some("/Root/Components"), false, &[]);
     assert!(result.contains(&"/Root/Components/MyComponent".to_string()),
         "Expected /Root/Components/MyComponent in {:?}", result);
 }
@@ -231,7 +288,7 @@ fn ls_show_elements_recursive_includes_all_elements() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
 
-    let result = ls_collect(&path, true, None, true);
+    let result = ls_collect(&path, true, None, true, &[]);
     assert!(result.contains(&"/Root/Components/MyComponent".to_string()));
     assert!(result.contains(&"/Root/Interfaces/MySRInterface".to_string()));
 }
@@ -243,7 +300,7 @@ fn ls_show_elements_without_recursive_does_not_include_sub_package_elements() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
 
-    let result = ls_collect(&path, true, Some("/Root"), false);
+    let result = ls_collect(&path, true, Some("/Root"), false, &[]);
     assert!(
         !result.contains(&"/Root/Components/MyComponent".to_string()),
         "Without -R, elements from sub-packages must not appear: {:?}", result
@@ -260,7 +317,7 @@ fn ls_show_elements_with_recursive_includes_sub_package_elements() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
 
-    let result = ls_collect(&path, true, Some("/Root"), true);
+    let result = ls_collect(&path, true, Some("/Root"), true, &[]);
     assert!(
         result.contains(&"/Root/Components/MyComponent".to_string()),
         "With -R, elements from sub-packages must appear: {:?}", result
@@ -338,7 +395,7 @@ fn find_package_ranges_unknown_package_returns_empty() {
 
 /// Parse an ARXML output file and return the SHORT-NAMEs of its top-level AR-PACKAGEs.
 fn toplevel_package_names(path: &str) -> Vec<String> {
-    ls_collect(path, false, None, false)
+    ls_collect(path, false, None, false, &[])
         .into_iter()
         .map(|p| p.trim_start_matches('/').to_string())
         .collect()
@@ -452,7 +509,7 @@ fn cmd_cp_preserves_nested_content() {
     cmd_cp(&input, &groups, None);
 
     // Sub-packages of Root must still be present.
-    let names = ls_collect(&output, false, None, true);
+    let names = ls_collect(&output, false, None, true, &[]);
     assert!(names.contains(&"/Root/Components".to_string()));
     assert!(names.contains(&"/Root/Interfaces".to_string()));
 }
@@ -544,7 +601,7 @@ fn cmd_rm_preserves_remaining_package_content() {
 
     cmd_rm(&path, &[s("Types")]);
 
-    let names = ls_collect(&path, false, None, true);
+    let names = ls_collect(&path, false, None, true, &[]);
     assert!(names.contains(&"/Root".to_string()));
     assert!(names.contains(&"/Root/Components".to_string()));
     assert!(names.contains(&"/Root/Interfaces".to_string()));
@@ -595,11 +652,11 @@ fn cmd_rm_removes_element_from_package() {
     cmd_rm(&path, &pkgs);
 
     // Package must still exist
-    let names = ls_collect(&path, false, None, true);
+    let names = ls_collect(&path, false, None, true, &[]);
     assert!(names.contains(&"/Root/Components".to_string()));
 
     // Element must be gone
-    let elements = ls_collect(&path, true, Some("/Root/Components"), false);
+    let elements = ls_collect(&path, true, Some("/Root/Components"), false, &[]);
     assert!(!elements.contains(&"/Root/Components/MyComponent".to_string()),
         "MyComponent should have been removed, got: {:?}", elements);
 }
@@ -613,7 +670,7 @@ fn cmd_rm_element_leaves_sibling_elements_intact() {
     let pkgs = parse_rm_args(&[s("Root/Components/MyComponent")]);
     cmd_rm(&path, &pkgs);
 
-    let elements = ls_collect(&path, true, Some("/Root/Interfaces"), false);
+    let elements = ls_collect(&path, true, Some("/Root/Interfaces"), false, &[]);
     assert!(elements.contains(&"/Root/Interfaces/MySRInterface".to_string()),
         "MySRInterface should still be present, got: {:?}", elements);
 }
@@ -627,7 +684,7 @@ fn cmd_rm_element_result_is_valid_arxml() {
     cmd_rm(&path, &pkgs);
 
     // ls_collect must be able to parse the result without errors
-    let names = ls_collect(&path, false, None, true);
+    let names = ls_collect(&path, false, None, true, &[]);
     assert!(names.contains(&"/Root".to_string()));
     assert!(names.contains(&"/Root/Interfaces".to_string()));
 }
