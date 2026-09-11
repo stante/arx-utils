@@ -62,6 +62,38 @@ const NESTED_ARXML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </AUTOSAR>
 "#;
 
+/// ARXML where a package has BOTH its own ELEMENTS *and* nested
+/// AR-PACKAGES, with ELEMENTS declared *after* the nested AR-PACKAGES block
+/// (a valid ordering some real-world tools produce). Regression fixture for
+/// a parser-state leak between package "frames".
+const REVERSED_ORDER_ARXML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>Root</SHORT-NAME>
+      <AR-PACKAGES>
+        <AR-PACKAGE>
+          <SHORT-NAME>PkgA</SHORT-NAME>
+          <ELEMENTS>
+            <APPLICATION-SW-COMPONENT-TYPE>
+              <SHORT-NAME>ElemA</SHORT-NAME>
+            </APPLICATION-SW-COMPONENT-TYPE>
+          </ELEMENTS>
+        </AR-PACKAGE>
+      </AR-PACKAGES>
+      <ELEMENTS>
+        <APPLICATION-SW-COMPONENT-TYPE>
+          <SHORT-NAME>ElemRoot</SHORT-NAME>
+        </APPLICATION-SW-COMPONENT-TYPE>
+      </ELEMENTS>
+    </AR-PACKAGE>
+    <AR-PACKAGE>
+      <SHORT-NAME>Types</SHORT-NAME>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>
+"#;
+
 /// ARXML with several similarly-named sibling/nested packages, used to
 /// exercise wildcard exclude patterns.
 const WILDCARD_ARXML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -384,6 +416,29 @@ fn ls_show_elements_with_recursive_includes_sub_package_elements() {
     assert!(
         result.contains(&"/Root/Interfaces/MySRInterface".to_string()),
         "With -R, elements from sub-packages must appear: {:?}", result
+    );
+}
+
+#[test]
+fn ls_show_elements_handles_elements_declared_after_nested_packages() {
+    // Regression: a package with both nested AR-PACKAGES *and* its own
+    // ELEMENTS, where ELEMENTS is declared after AR-PACKAGES, must not leak
+    // parser state into subsequent siblings.
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "reversed.arxml", REVERSED_ORDER_ARXML);
+
+    let result = ls_collect(&path, true, None, true, &[]);
+    assert_eq!(
+        result,
+        vec![
+            "/Root",
+            "/Root/PkgA",
+            "/Root/PkgA/ElemA",
+            "/Root/ElemRoot",
+            "/Types",
+        ],
+        "Types must be a top-level package, not nested under Root: {:?}",
+        result
     );
 }
 

@@ -65,6 +65,22 @@ pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>, recursive: 
     }
 }
 
+/// Per-AR-PACKAGE parsing state, pushed when an `AR-PACKAGE` opens and
+/// popped when it closes. Using a stack (instead of shared scalars) ensures
+/// that closing a nested AR-PACKAGE correctly restores the enclosing
+/// package's own ELEMENTS-tracking state, regardless of whether `ELEMENTS`
+/// appears before or after the nested `AR-PACKAGES` block in the XML.
+struct PkgFrame {
+    /// Depth at which this AR-PACKAGE's own `<AR-PACKAGE>` start tag occurred.
+    capture_depth: usize,
+    /// Whether we're currently inside this package's own `<ELEMENTS>` block.
+    in_elements: bool,
+    /// `capture_depth` of the package that owns the currently open `ELEMENTS` block.
+    elements_pkg_depth: usize,
+    /// Depth of the current element's type tag (e.g. `<APPLICATION-SW-COMPONENT-TYPE>`) within ELEMENTS.
+    element_tag_depth: usize,
+}
+
 /// Core logic of `ls`: returns the list of paths that would be printed.
 /// Separated from `cmd_ls` so it can be called in tests without capturing stdout.
 pub fn ls_collect(
@@ -87,10 +103,10 @@ pub fn ls_collect(
     let mut buf = Vec::new();
     let mut package_stack: Vec<String> = Vec::new();
     let mut capturing_short_name = false;
-    let mut in_elements = false;
-    let mut elements_pkg_depth: usize = 0;
-    let mut element_tag_depth: usize = 0;
-    let mut capture_depth: usize = 0;
+    // One frame per currently-open AR-PACKAGE, so that closing a nested
+    // AR-PACKAGE correctly restores the enclosing package's own ELEMENTS
+    // tracking state (instead of leaking stale depths between siblings).
+    let mut pkg_frames: Vec<PkgFrame> = Vec::new();
     let mut depth: usize = 0;
     let mut results: Vec<String> = Vec::new();
 
@@ -101,33 +117,40 @@ pub fn ls_collect(
                 let name = local_name_str(e.local_name().as_ref());
 
                 if name == "AR-PACKAGE" {
-                    capture_depth = depth;
-                    in_elements = false;
-                    element_tag_depth = 0;
-                } else if name == "SHORT-NAME"
-                    && capture_depth > 0
-                    && depth == capture_depth + 1
-                    && !in_elements
-                    && element_tag_depth == 0
-                {
-                    capturing_short_name = true;
-                } else if show_elements && name == "ELEMENTS" && capture_depth > 0 && depth == capture_depth + 1 {
-                    in_elements = true;
-                    elements_pkg_depth = capture_depth;
-                } else if show_elements && in_elements && depth == elements_pkg_depth + 2 {
-                    element_tag_depth = depth;
-                } else if show_elements && in_elements && element_tag_depth > 0
-                    && name == "SHORT-NAME" && depth == element_tag_depth + 1
-                {
-                    capturing_short_name = true;
+                    pkg_frames.push(PkgFrame {
+                        capture_depth: depth,
+                        in_elements: false,
+                        elements_pkg_depth: 0,
+                        element_tag_depth: 0,
+                    });
+                } else if let Some(frame) = pkg_frames.last_mut() {
+                    if name == "SHORT-NAME"
+                        && depth == frame.capture_depth + 1
+                        && !frame.in_elements
+                        && frame.element_tag_depth == 0
+                    {
+                        capturing_short_name = true;
+                    } else if show_elements && name == "ELEMENTS" && depth == frame.capture_depth + 1 {
+                        frame.in_elements = true;
+                        frame.elements_pkg_depth = frame.capture_depth;
+                    } else if show_elements && frame.in_elements && depth == frame.elements_pkg_depth + 2 {
+                        frame.element_tag_depth = depth;
+                    } else if show_elements && frame.in_elements && frame.element_tag_depth > 0
+                        && name == "SHORT-NAME" && depth == frame.element_tag_depth + 1
+                    {
+                        capturing_short_name = true;
+                    }
                 }
             }
             Ok(Event::Text(ref e)) => {
                 if capturing_short_name {
                     let short_name = e.unescape().unwrap_or_default().into_owned();
                     capturing_short_name = false;
+                    let frame_in_elements = pkg_frames.last().map_or(false, |f| f.in_elements);
+                    let frame_element_tag_depth =
+                        pkg_frames.last().map_or(0, |f| f.element_tag_depth);
 
-                    if in_elements && element_tag_depth > 0 {
+                    if frame_in_elements && frame_element_tag_depth > 0 {
                         let full = format!("/{}/{}", package_stack.join("/"), short_name);
                         // Element is a direct child of package_stack's current package.
                         // Print it when the parent package would be visible:
@@ -152,7 +175,9 @@ pub fn ls_collect(
                         if element_visible && !is_excluded(&full, &excludes) {
                             results.push(full);
                         }
-                        element_tag_depth = 0;
+                        if let Some(frame) = pkg_frames.last_mut() {
+                            frame.element_tag_depth = 0;
+                        }
                     } else {
                         package_stack.push(short_name);
                         let full = format!("/{}", package_stack.join("/"));
@@ -168,11 +193,12 @@ pub fn ls_collect(
                 let name = local_name_str(e.local_name().as_ref());
                 if name == "AR-PACKAGE" {
                     package_stack.pop();
-                    in_elements = false;
-                    element_tag_depth = 0;
+                    pkg_frames.pop();
                 } else if name == "ELEMENTS" {
-                    in_elements = false;
-                    element_tag_depth = 0;
+                    if let Some(frame) = pkg_frames.last_mut() {
+                        frame.in_elements = false;
+                        frame.element_tag_depth = 0;
+                    }
                 }
                 depth -= 1;
             }
