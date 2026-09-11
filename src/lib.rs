@@ -90,9 +90,6 @@ struct PkgFrame {
     /// SHORT-NAME values of all currently open *named* ancestors within this
     /// package's ELEMENTS subtree (unnamed wrapper tags contribute nothing).
     named_path: Vec<String>,
-    /// Whether this package's elements should be shown at all, computed once
-    /// when `ELEMENTS` opens (based on package-level filter/-R visibility).
-    elements_visible: bool,
 }
 
 /// One currently open tag within an ELEMENTS subtree. Becomes `named` once a
@@ -158,7 +155,6 @@ pub fn ls_collect(
                         in_elements: false,
                         elem_open: Vec::new(),
                         named_path: Vec::new(),
-                        elements_visible: false,
                     });
                 } else if let Some(frame) = pkg_frames.last_mut() {
                     if !frame.in_elements {
@@ -168,24 +164,6 @@ pub fn ls_collect(
                             frame.in_elements = true;
                             frame.elem_open.clear();
                             frame.named_path.clear();
-                            // Visibility of this package's elements is fixed for
-                            // as long as we're inside its ELEMENTS subtree; it only
-                            // depends on the (unchanging) package_stack/filter/-R.
-                            let parent_depth = package_stack.len();
-                            frame.elements_visible = match filter.as_deref() {
-                                None => {
-                                    if recursive { true } else { parent_depth == filter_depth }
-                                }
-                                Some(f) => {
-                                    let parent = format!("/{}", package_stack.join("/"));
-                                    let filter_with_slash = format!("/{}", f);
-                                    let under = parent == filter_with_slash
-                                        || parent.starts_with(&format!("{}/", filter_with_slash));
-                                    if !under { false }
-                                    else if recursive { true }
-                                    else { parent == filter_with_slash }
-                                }
-                            };
                         }
                     } else if name == "SHORT-NAME" {
                         // Only a direct child of the innermost open (not yet
@@ -240,8 +218,16 @@ pub fn ls_collect(
                         let depth_ok = deep_elements || frame.named_path.len() == 1;
                         let type_ok = type_filter.is_empty()
                             || type_filter.iter().any(|t| t == &tag_name);
+                        // Visibility uses the *full* path (packages + element
+                        // segments) against the filter, so a /filter/path may
+                        // reach past the owning package into the element
+                        // hierarchy itself (e.g. /Root/Cluster/Variant/Channel).
+                        // -E makes this "recursive" for the element portion,
+                        // independent of -R (which only governs AR-PACKAGE
+                        // recursion for package nodes).
+                        let visible = should_print(&full, filter.as_deref(), filter_depth, recursive || deep_elements);
 
-                        if depth_ok && type_ok && frame.elements_visible && !is_excluded(&full, &excludes) {
+                        if depth_ok && type_ok && visible && !is_excluded(&full, &excludes) {
                             results.push(full);
                         }
                     }

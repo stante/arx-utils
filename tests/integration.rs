@@ -596,8 +596,60 @@ fn ls_deep_elements_ignores_recursive_flag_once_package_is_visible() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// find_package_ranges
+#[test]
+fn ls_deep_elements_filter_reaches_past_package_into_element_hierarchy() {
+    // Regression: /filter/path may point *past* the owning AR-PACKAGE, deep
+    // into the nested named-element hierarchy itself (e.g. targeting a
+    // specific channel inside a cluster), without -R.
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
+
+    let result = ls_collect(
+        &path,
+        false,
+        Some("/Root/Network/MyCluster/Variant1/Channel1"),
+        false,
+        &[],
+        true,
+        &[],
+    );
+    assert_eq!(
+        result,
+        vec![
+            // -E behaves like -R for the element portion, so the exact
+            // filter match itself is included too (consistent with how -R
+            // includes the filter package itself for AR-PACKAGE filters).
+            "/Root/Network/MyCluster/Variant1/Channel1",
+            "/Root/Network/MyCluster/Variant1/Channel1/Trig1",
+            "/Root/Network/MyCluster/Variant1/Channel1/Trig2",
+        ]
+    );
+}
+
+#[test]
+fn ls_deep_elements_filter_past_package_with_type_filter() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
+
+    let result = ls_collect(
+        &path,
+        false,
+        Some("/Root/Network/MyCluster/Variant1"),
+        false,
+        &[],
+        true,
+        &[s("I-SIGNAL-TRIGGERING")],
+    );
+    assert_eq!(
+        result,
+        vec![
+            "/Root/Network/MyCluster/Variant1/Channel1/Trig1",
+            "/Root/Network/MyCluster/Variant1/Channel1/Trig2",
+        ]
+    );
+}
+
+
 // ---------------------------------------------------------------------------
 
 #[test]

@@ -35,7 +35,7 @@ arx ls [-e] [-E] [-R] [-x <path>]... [-t <type>]... [/filter/path] <file.arxml>
 | `-R` | Recursive — show all descendant packages, not just direct children |
 | `-x <path>` | Exclude this `AR-PACKAGE` (and everything under it) from the output. Supports `*` as a wildcard and may be repeated |
 | `-t <type>` | Only with `-e`/`-E`: only show elements whose own XML tag matches this type name (e.g. `I-SIGNAL-TRIGGERING`). Repeatable (OR-matched). Once `-t` is used, `AR-PACKAGE` paths are suppressed entirely — output is just the flat list of matching elements' full paths. Non-matching ancestors are still traversed (silently) to reach matching descendants |
-| `/filter/path` | Only show packages (and, with `-e`/`-E`, elements) under this AUTOSAR path prefix |
+| `/filter/path` | Only show packages (and, with `-e`/`-E`, elements) under this AUTOSAR path prefix. With `-E`, the path may reach past the owning `AR-PACKAGE` into the nested element hierarchy itself |
 
 `-x` patterns support `*` as a wildcard matching any sequence of characters
 (including `/`), so a pattern doesn't have to name an exact package — e.g.
@@ -48,6 +48,12 @@ expand `*` themselves.
 own (e.g. `ETHERNET-CLUSTER-VARIANTS`, `PHYSICAL-CHANNELS`,
 `I-SIGNAL-TRIGGERINGS`) without adding them as path segments — only elements
 that actually have their own `SHORT-NAME` show up in the output.
+
+With `-E`, `/filter/path` isn't limited to `AR-PACKAGE` boundaries — it may
+point at any named element, however deep, e.g.
+`/Root/Cluster/Variant1/Channel1`. Everything under that path is then shown
+(the exact match itself is included too, the same way `-R` includes the
+filter package itself), independent of `-R`.
 
 **Examples:**
 
@@ -72,6 +78,10 @@ arx ls -R -x /ComponentTypes/Dummy* model.arxml
 
 # List every I-SIGNAL-TRIGGERING anywhere in the file, however deeply nested
 arx ls -R -E -t I-SIGNAL-TRIGGERING model.arxml
+
+# List every I-SIGNAL-TRIGGERING under one specific channel (no -R needed —
+# the filter already reaches into the element hierarchy)
+arx ls -E -t I-SIGNAL-TRIGGERING /Root/Cluster/Variant1/Channel1 model.arxml
 ```
 
 ---
