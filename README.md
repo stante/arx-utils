@@ -55,6 +55,12 @@ point at any named element, however deep, e.g.
 (the exact match itself is included too, the same way `-R` includes the
 filter package itself), independent of `-R`.
 
+`/filter/path` segments may also contain `*` as a wildcard, e.g.
+`/Root/*/Channel1` matches `Channel1` under any direct child of `Root`.
+Unlike `-x`, a filter wildcard matches only *within* a single segment — it
+does not span `/` — so the pattern's segment count still determines what
+"direct child" means for the non-`-R` case.
+
 **Examples:**
 
 ```sh

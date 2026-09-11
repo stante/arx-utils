@@ -321,6 +321,62 @@ fn ls_filter_non_matching_returns_empty() {
 }
 
 #[test]
+fn ls_filter_wildcard_matches_any_direct_child_segment() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    // "*" matches any single package segment ("Components" here), same as
+    // giving the literal path would.
+    let result = ls_collect(&path, false, Some("/Root/*"), true, &[], false, &[]);
+    assert_eq!(result, vec!["/Root/Components", "/Root/Interfaces"]);
+}
+
+#[test]
+fn ls_filter_wildcard_matches_some_siblings_but_not_others() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
+
+    // The wildcard segment only matches "Dummy*" packages, "Real" (a
+    // literal sibling that doesn't match) must be excluded even though it's
+    // at the same depth.
+    let result = ls_collect(&path, false, Some("/ComponentTypes/Dummy*"), true, &[], false, &[]);
+    assert_eq!(
+        result,
+        vec![
+            "/ComponentTypes/DummyA",
+            "/ComponentTypes/DummyA/Sub",
+            "/ComponentTypes/DummyB",
+        ]
+    );
+}
+
+#[test]
+fn ls_deep_elements_filter_wildcard_reaches_into_element_hierarchy() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
+
+
+    // Wildcard segment standing in for "Variant1", filter still reaches
+    // past the owning AR-PACKAGE into the element hierarchy.
+    let result = ls_collect(
+        &path,
+        false,
+        Some("/Root/Network/MyCluster/*/Channel1"),
+        false,
+        &[],
+        true,
+        &[s("I-SIGNAL-TRIGGERING")],
+    );
+    assert_eq!(
+        result,
+        vec![
+            "/Root/Network/MyCluster/Variant1/Channel1/Trig1",
+            "/Root/Network/MyCluster/Variant1/Channel1/Trig2",
+        ]
+    );
+}
+
+#[test]
 fn ls_exclude_top_level_package() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);

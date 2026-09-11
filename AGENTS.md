@@ -38,7 +38,7 @@ tests/
 ## Commands
 
 ### `arx ls [-e] [-E] [-R] [-x <path>]... [-t <type>]... [/filter] <file.arxml>`
-Lists AR-PACKAGE paths. `-e` includes top-level ELEMENTS entries, `-E` recurses arbitrarily deep into nested named sub-elements (independent of `-R`; skips unnamed wrapper/collection tags in the path), `-R` recurses into sub-packages, `-x <path>` excludes a package (and everything under it, `*` wildcard supported) and may be repeated, `-t <type>` (with `-e`/`-E`) only shows elements whose own tag matches this type name and suppresses AR-PACKAGE paths entirely (repeatable), `/filter` limits output to a path prefix and (with `-E`) may reach past the owning AR-PACKAGE into the nested element hierarchy itself.
+Lists AR-PACKAGE paths. `-e` includes top-level ELEMENTS entries, `-E` recurses arbitrarily deep into nested named sub-elements (independent of `-R`; skips unnamed wrapper/collection tags in the path), `-R` recurses into sub-packages, `-x <path>` excludes a package (and everything under it, `*` wildcard supported) and may be repeated, `-t <type>` (with `-e`/`-E`) only shows elements whose own tag matches this type name and suppresses AR-PACKAGE paths entirely (repeatable), `/filter` limits output to a path prefix and (with `-E`) may reach past the owning AR-PACKAGE into the nested element hierarchy itself; `/filter` segments may also use `*` as a wildcard (matches within one segment, unlike `-x` it does not span `/`).
 
 ### `arx cp <file.arxml> <pkg>... --into <out.arxml> [--rest <rest.arxml>]`
 Copies AR-PACKAGE blocks into output files. `--into` can be repeated. `--rest` collects all unmatched top-level packages.
@@ -149,6 +149,25 @@ loop {
 Used in `cmd_cp` and `cmd_rm`:
 1. **Scan pass**: stream XML, record `(start, end)` byte offsets via `xml.buffer_position()`
 2. **Write pass**: open raw bytes, copy slices verbatim — no re-serialisation
+
+### Arena Tree Pattern (`ls`)
+`ls_collect` is a thin wrapper around two decoupled phases, so traversal and
+filtering never have to be juggled together in one state machine:
+1. **`build_tree`** (uses the standard event-loop skeleton above): one
+   streaming pass builds a `Tree { nodes: Vec<Node> }` arena of *every*
+   AR-PACKAGE and *every* named element at any depth, unconditionally —
+   ignoring `-e`/`-E`/`-R`/filter/`-t`/`-x` entirely. Each `Node` stores only
+   its own name plus a `parent: Option<usize>` index into the same `Vec`
+   (classic arena/index-tree pattern — no `Rc`/`RefCell`, no per-node full
+   path strings, so a node's name is stored exactly once no matter how many
+   descendants it has).
+2. **`query_tree`**: a plain loop over the arena that applies all `ls`
+   options as simple, independent predicate checks (type, depth, then —
+   only for nodes that already passed those cheap checks — the full path via
+   `Tree::full_path`, matched against `/filter/path` and `-x` patterns).
+
+New `ls` filtering features should almost always be added to `query_tree`,
+not `build_tree`.
 
 ---
 

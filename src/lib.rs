@@ -73,12 +73,64 @@ pub fn cmd_ls(
     }
 }
 
-/// Per-AR-PACKAGE parsing state, pushed when an `AR-PACKAGE` opens and
-/// popped when it closes. Using a stack (instead of shared scalars) ensures
-/// that closing a nested AR-PACKAGE correctly restores the enclosing
-/// package's own ELEMENTS-tracking state, regardless of whether `ELEMENTS`
-/// appears before or after the nested `AR-PACKAGES` block in the XML.
-struct PkgFrame {
+/// What kind of named node this is.
+enum NodeKind {
+    /// An `AR-PACKAGE`.
+    Package,
+    /// A named element somewhere inside a package's `ELEMENTS` subtree.
+    /// `tag` is the element's own XML tag name (e.g. `I-SIGNAL-TRIGGERING`).
+    /// `depth` is 1 for the first typed element directly under `ELEMENTS`,
+    /// 2 for its named children, and so on (unnamed wrapper/collection tags,
+    /// e.g. `PHYSICAL-CHANNELS`, don't count towards this depth).
+    Element { tag: String, depth: usize },
+}
+
+/// One node in the [`Tree`] arena. `parent` is an index into `Tree::nodes`
+/// (`None` for a top-level `AR-PACKAGE`).
+struct Node {
+    name: String,
+    kind: NodeKind,
+    parent: Option<usize>,
+}
+
+/// Arena-based tree of every named `AR-PACKAGE` and every named element (at
+/// any nesting depth) found in an ARXML file. Built once via [`build_tree`]
+/// in a single streaming pass; independent of any `ls` filtering options
+/// (`-e`/`-E`/`-R`/filter path/`-t`/`-x`), which are all applied afterwards
+/// by [`query_tree`].
+///
+/// Nodes reference their parent by index instead of each storing its own
+/// full path string, so a node's name is kept exactly once no matter how
+/// many descendants it has — e.g. a channel with 500 signal triggerings
+/// underneath doesn't duplicate its own path prefix 500 times.
+struct Tree {
+    nodes: Vec<Node>,
+}
+
+impl Tree {
+    /// Reconstructs the full `/`-separated path of `idx` by walking up the
+    /// `parent` chain. Only called (by `query_tree`) for nodes that already
+    /// passed the cheap pre-filters (type, depth), so the cost is
+    /// proportional to the number of *matches*, not the size of the tree.
+    fn full_path(&self, idx: usize) -> String {
+        let mut segments = Vec::new();
+        let mut cur = Some(idx);
+        while let Some(i) = cur {
+            segments.push(self.nodes[i].name.as_str());
+            cur = self.nodes[i].parent;
+        }
+        segments.reverse();
+        format!("/{}", segments.join("/"))
+    }
+}
+
+/// Per-AR-PACKAGE parsing state used while building the [`Tree`], pushed
+/// when an `AR-PACKAGE` opens and popped when it closes. Using a stack
+/// (instead of shared scalars) ensures that closing a nested AR-PACKAGE
+/// correctly restores the enclosing package's own ELEMENTS-tracking state,
+/// regardless of whether `ELEMENTS` appears before or after the nested
+/// `AR-PACKAGES` block in the XML.
+struct PkgBuildFrame {
     /// Depth at which this AR-PACKAGE's own `<AR-PACKAGE>` start tag occurred.
     capture_depth: usize,
     /// Whether we're currently inside this package's own `<ELEMENTS>` block.
@@ -86,22 +138,235 @@ struct PkgFrame {
     /// Stack of currently open tags within this package's ELEMENTS subtree
     /// (mirrors XML nesting exactly, including wrapper/collection tags that
     /// never get their own SHORT-NAME, e.g. `PHYSICAL-CHANNELS`).
-    elem_open: Vec<ElemFrame>,
-    /// SHORT-NAME values of all currently open *named* ancestors within this
+    elem_open: Vec<ElemBuildFrame>,
+    /// Arena indices of all currently open *named* ancestors within this
     /// package's ELEMENTS subtree (unnamed wrapper tags contribute nothing).
-    named_path: Vec<String>,
+    named_stack: Vec<usize>,
 }
 
-/// One currently open tag within an ELEMENTS subtree. Becomes `named` once a
-/// direct `SHORT-NAME` child has been seen for it.
-struct ElemFrame {
+/// One currently open tag within an ELEMENTS subtree, during tree building.
+/// Becomes `named` once a direct `SHORT-NAME` child has been seen for it.
+struct ElemBuildFrame {
     depth: usize,
     tag_name: String,
     named: bool,
 }
 
+/// Streams `path` once and builds the full [`Tree`] of every `AR-PACKAGE`
+/// and every named element at any depth. Always builds everything,
+/// regardless of any `ls` filtering options — those are applied afterwards
+/// by [`query_tree`], keeping traversal and filtering fully decoupled.
+fn build_tree(path: &str) -> Tree {
+    let file = open_file(path);
+    let reader = BufReader::new(file);
+    let mut xml = Reader::from_reader(reader);
+    xml.config_mut().trim_text(true);
+
+    let mut buf = Vec::new();
+    let mut nodes: Vec<Node> = Vec::new();
+    // Arena indices of all currently open AR-PACKAGEs.
+    let mut package_stack: Vec<usize> = Vec::new();
+    let mut capturing_short_name = false;
+    let mut capturing_element_short_name = false;
+    // One frame per currently-open AR-PACKAGE, so that closing a nested
+    // AR-PACKAGE correctly restores the enclosing package's own ELEMENTS
+    // tracking state (instead of leaking stale depths between siblings).
+    let mut pkg_frames: Vec<PkgBuildFrame> = Vec::new();
+    let mut depth: usize = 0;
+
+    loop {
+        match xml.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) => {
+                depth += 1;
+                let name = local_name_str(e.local_name().as_ref());
+
+                if name == "AR-PACKAGE" {
+                    pkg_frames.push(PkgBuildFrame {
+                        capture_depth: depth,
+                        in_elements: false,
+                        elem_open: Vec::new(),
+                        named_stack: Vec::new(),
+                    });
+                } else if let Some(frame) = pkg_frames.last_mut() {
+                    if !frame.in_elements {
+                        if name == "SHORT-NAME" && depth == frame.capture_depth + 1 {
+                            capturing_short_name = true;
+                        } else if name == "ELEMENTS" && depth == frame.capture_depth + 1 {
+                            frame.in_elements = true;
+                            frame.elem_open.clear();
+                            frame.named_stack.clear();
+                        }
+                    } else if name == "SHORT-NAME" {
+                        // Only a direct child of the innermost open (not yet
+                        // named) tag counts as that tag's own SHORT-NAME.
+                        if let Some(top) = frame.elem_open.last() {
+                            if !top.named && depth == top.depth + 1 {
+                                capturing_element_short_name = true;
+                            }
+                        }
+                    } else {
+                        // Any other tag while inside ELEMENTS: could be a
+                        // wrapper/collection tag (no own SHORT-NAME) or a
+                        // typed element — we don't know yet, so just track it.
+                        frame.elem_open.push(ElemBuildFrame { depth, tag_name: name, named: false });
+                    }
+                }
+            }
+            Ok(Event::Text(ref e)) => {
+                if capturing_short_name {
+                    let short_name = e.unescape().unwrap_or_default().into_owned();
+                    capturing_short_name = false;
+
+                    let parent = package_stack.last().copied();
+                    nodes.push(Node { name: short_name, kind: NodeKind::Package, parent });
+                    package_stack.push(nodes.len() - 1);
+                } else if capturing_element_short_name {
+                    let short_name = e.unescape().unwrap_or_default().into_owned();
+                    capturing_element_short_name = false;
+
+                    if let Some(frame) = pkg_frames.last_mut() {
+                        let tag_name = match frame.elem_open.last_mut() {
+                            Some(top) => {
+                                top.named = true;
+                                top.tag_name.clone()
+                            }
+                            None => String::new(),
+                        };
+
+                        let parent = frame
+                            .named_stack
+                            .last()
+                            .copied()
+                            .or_else(|| package_stack.last().copied());
+                        let elem_depth = frame.named_stack.len() + 1;
+
+                        nodes.push(Node {
+                            name: short_name,
+                            kind: NodeKind::Element { tag: tag_name, depth: elem_depth },
+                            parent,
+                        });
+                        frame.named_stack.push(nodes.len() - 1);
+                    }
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let name = local_name_str(e.local_name().as_ref());
+                if name == "AR-PACKAGE" {
+                    package_stack.pop();
+                    pkg_frames.pop();
+                } else if let Some(frame) = pkg_frames.last_mut() {
+                    if frame.in_elements {
+                        if name == "ELEMENTS" {
+                            frame.in_elements = false;
+                            frame.elem_open.clear();
+                            frame.named_stack.clear();
+                        } else if name != "SHORT-NAME" {
+                            if let Some(popped) = frame.elem_open.pop() {
+                                if popped.named {
+                                    frame.named_stack.pop();
+                                }
+                            }
+                        }
+                    }
+                }
+                depth -= 1;
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => {
+                eprintln!("XML parse error: {}", e);
+                std::process::exit(1);
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Tree { nodes }
+}
+
+/// Applies all `ls` filtering options to a [`Tree`] built by [`build_tree`],
+/// returning the paths that should be printed, in the same order the nodes
+/// were encountered while building the tree (i.e. document order).
+///
+/// - `deep_elements`: if true, include nested named elements at any depth
+///   (e.g. `ETHERNET-CLUSTER-VARIANTS/.../I-SIGNAL-TRIGGERINGS`), not just
+///   the first typed element directly under `ELEMENTS`. Independent of
+///   `recursive`, which only governs AR-PACKAGE recursion for package nodes.
+/// - `type_filter`: if non-empty, only include element nodes whose own XML
+///   tag name (e.g. `I-SIGNAL-TRIGGERING`) matches one of the given names,
+///   and suppress AR-PACKAGE paths entirely (the user wants a flat list of
+///   matching objects, not the surrounding package structure).
+fn query_tree(
+    tree: &Tree,
+    show_elements: bool,
+    filter: Option<&str>,
+    recursive: bool,
+    excludes: &[String],
+    deep_elements: bool,
+    type_filter: &[String],
+) -> Vec<String> {
+    let filter = filter.map(|f| normalise_path(f));
+    let excludes: Vec<String> = excludes.iter().map(|e| normalise_path(e)).collect();
+    // Deep element traversal implies elements are shown at all.
+    let show_elements = show_elements || deep_elements;
+    // Depth of the filter path (0 = no filter, 1 = /Root, 2 = /Root/Components, ...)
+    let filter_depth = filter.as_deref().map(|f| f.split('/').count()).unwrap_or(0);
+
+    let mut results = Vec::new();
+
+    for idx in 0..tree.nodes.len() {
+        match &tree.nodes[idx].kind {
+            NodeKind::Package => {
+                if !type_filter.is_empty() {
+                    continue;
+                }
+                let full = tree.full_path(idx);
+                if should_print(&full, filter.as_deref(), filter_depth, recursive)
+                    && !is_excluded(&full, &excludes)
+                {
+                    results.push(full);
+                }
+            }
+            NodeKind::Element { tag, depth } => {
+                if !show_elements {
+                    continue;
+                }
+                // Shallow mode (-e only): just the first typed element
+                // directly under ELEMENTS. Deep mode (-E): any depth.
+                if !deep_elements && *depth != 1 {
+                    continue;
+                }
+                if !type_filter.is_empty() && !type_filter.iter().any(|t| t == tag) {
+                    continue;
+                }
+
+                // Only build the full path (walking up the arena) once the
+                // cheap checks above already passed — cost is proportional
+                // to the number of matches, not the size of the whole tree.
+                let full = tree.full_path(idx);
+
+                // Visibility uses the *full* path (packages + element
+                // segments) against the filter, so a /filter/path may reach
+                // past the owning package into the element hierarchy itself
+                // (e.g. /Root/Cluster/Variant/Channel). -E makes this
+                // "recursive" for the element portion, independent of -R
+                // (which only governs AR-PACKAGE recursion for packages).
+                let visible = should_print(&full, filter.as_deref(), filter_depth, recursive || deep_elements);
+
+                if visible && !is_excluded(&full, &excludes) {
+                    results.push(full);
+                }
+            }
+        }
+    }
+
+    results
+}
+
 /// Core logic of `ls`: returns the list of paths that would be printed.
-/// Separated from `cmd_ls` so it can be called in tests without capturing stdout.
+/// Separated from `cmd_ls` so it can be called in tests without capturing
+/// stdout. Internally builds a [`Tree`] of the whole file once (see
+/// [`build_tree`]), then filters it (see [`query_tree`]).
 ///
 /// - `deep_elements`: if true, recurse arbitrarily deep into nested named
 ///   elements (e.g. `ETHERNET-CLUSTER-VARIANTS/.../I-SIGNAL-TRIGGERINGS`),
@@ -120,167 +385,21 @@ pub fn ls_collect(
     deep_elements: bool,
     type_filter: &[String],
 ) -> Vec<String> {
-    let filter = filter.map(|f| normalise_path(f));
-    let excludes: Vec<String> = excludes.iter().map(|e| normalise_path(e)).collect();
-    // Deep element traversal implies elements are shown at all.
-    let show_elements = show_elements || deep_elements;
-    // Depth of the filter path (0 = no filter, 1 = /Root, 2 = /Root/Components, ...)
-    let filter_depth = filter.as_deref().map(|f| f.split('/').count()).unwrap_or(0);
-
-    let file = open_file(path);
-    let reader = BufReader::new(file);
-    let mut xml = Reader::from_reader(reader);
-    xml.config_mut().trim_text(true);
-
-    let mut buf = Vec::new();
-    let mut package_stack: Vec<String> = Vec::new();
-    let mut capturing_short_name = false;
-    let mut capturing_element_short_name = false;
-    // One frame per currently-open AR-PACKAGE, so that closing a nested
-    // AR-PACKAGE correctly restores the enclosing package's own ELEMENTS
-    // tracking state (instead of leaking stale depths between siblings).
-    let mut pkg_frames: Vec<PkgFrame> = Vec::new();
-    let mut depth: usize = 0;
-    let mut results: Vec<String> = Vec::new();
-
-    loop {
-        match xml.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) => {
-                depth += 1;
-                let name = local_name_str(e.local_name().as_ref());
-
-                if name == "AR-PACKAGE" {
-                    pkg_frames.push(PkgFrame {
-                        capture_depth: depth,
-                        in_elements: false,
-                        elem_open: Vec::new(),
-                        named_path: Vec::new(),
-                    });
-                } else if let Some(frame) = pkg_frames.last_mut() {
-                    if !frame.in_elements {
-                        if name == "SHORT-NAME" && depth == frame.capture_depth + 1 {
-                            capturing_short_name = true;
-                        } else if show_elements && name == "ELEMENTS" && depth == frame.capture_depth + 1 {
-                            frame.in_elements = true;
-                            frame.elem_open.clear();
-                            frame.named_path.clear();
-                        }
-                    } else if name == "SHORT-NAME" {
-                        // Only a direct child of the innermost open (not yet
-                        // named) tag counts as that tag's own SHORT-NAME.
-                        if let Some(top) = frame.elem_open.last() {
-                            if !top.named && depth == top.depth + 1 {
-                                capturing_element_short_name = true;
-                            }
-                        }
-                    } else {
-                        // Any other tag while inside ELEMENTS: could be a
-                        // wrapper/collection tag (no own SHORT-NAME) or a
-                        // typed element — we don't know yet, so just track it.
-                        frame.elem_open.push(ElemFrame { depth, tag_name: name, named: false });
-                    }
-                }
-            }
-            Ok(Event::Text(ref e)) => {
-                if capturing_short_name {
-                    let short_name = e.unescape().unwrap_or_default().into_owned();
-                    capturing_short_name = false;
-
-                    package_stack.push(short_name);
-                    let full = format!("/{}", package_stack.join("/"));
-                    // When a type filter is active, the user only wants matching
-                    // elements back (e.g. "find every I-SIGNAL-TRIGGERING"), not
-                    // the AR-PACKAGE structure around them.
-                    if type_filter.is_empty()
-                        && should_print(&full, filter.as_deref(), filter_depth, recursive)
-                        && !is_excluded(&full, &excludes)
-                    {
-                        results.push(full);
-                    }
-                } else if capturing_element_short_name {
-                    let short_name = e.unescape().unwrap_or_default().into_owned();
-                    capturing_element_short_name = false;
-
-                    if let Some(frame) = pkg_frames.last_mut() {
-                        let tag_name = match frame.elem_open.last_mut() {
-                            Some(top) => {
-                                top.named = true;
-                                top.tag_name.clone()
-                            }
-                            None => String::new(),
-                        };
-
-                        frame.named_path.push(short_name);
-                        let full = format!("/{}/{}", package_stack.join("/"), frame.named_path.join("/"));
-
-                        // Shallow mode (-e only): just the first typed element
-                        // directly under ELEMENTS. Deep mode (-E): any depth.
-                        let depth_ok = deep_elements || frame.named_path.len() == 1;
-                        let type_ok = type_filter.is_empty()
-                            || type_filter.iter().any(|t| t == &tag_name);
-                        // Visibility uses the *full* path (packages + element
-                        // segments) against the filter, so a /filter/path may
-                        // reach past the owning package into the element
-                        // hierarchy itself (e.g. /Root/Cluster/Variant/Channel).
-                        // -E makes this "recursive" for the element portion,
-                        // independent of -R (which only governs AR-PACKAGE
-                        // recursion for package nodes).
-                        let visible = should_print(&full, filter.as_deref(), filter_depth, recursive || deep_elements);
-
-                        if depth_ok && type_ok && visible && !is_excluded(&full, &excludes) {
-                            results.push(full);
-                        }
-                    }
-                }
-            }
-            Ok(Event::End(ref e)) => {
-                let name = local_name_str(e.local_name().as_ref());
-                if name == "AR-PACKAGE" {
-                    package_stack.pop();
-                    pkg_frames.pop();
-                } else if let Some(frame) = pkg_frames.last_mut() {
-                    if frame.in_elements {
-                        if name == "ELEMENTS" {
-                            frame.in_elements = false;
-                            frame.elem_open.clear();
-                            frame.named_path.clear();
-                        } else if name != "SHORT-NAME" {
-                            if let Some(popped) = frame.elem_open.pop() {
-                                if popped.named {
-                                    frame.named_path.pop();
-                                }
-                            }
-                        }
-                    }
-                }
-                depth -= 1;
-            }
-            Ok(Event::Eof) => break,
-            Err(e) => {
-                eprintln!("XML parse error: {}", e);
-                std::process::exit(1);
-            }
-            _ => {}
-        }
-        buf.clear();
-    }
-
-    results
+    let tree = build_tree(path);
+    query_tree(&tree, show_elements, filter, recursive, excludes, deep_elements, type_filter)
 }
 
 /// Returns true if `full_path` should be printed.
-/// - filter: optional prefix the path must be under (or equal to)
+/// - filter: optional prefix the path must be under (or equal to). May
+///   contain `*` wildcards per path segment (e.g. `Root/*/Channel1`) — see
+///   [`path_under_pattern`].
 /// - filter_depth: number of segments in the filter path
 /// - recursive: if false, only print direct children (depth == filter_depth + 1)
 fn should_print(full_path: &str, filter: Option<&str>, filter_depth: usize, recursive: bool) -> bool {
     // Check prefix constraint
     let under_filter = match filter {
         None => true,
-        Some(f) => {
-            let filter_with_slash = format!("/{}", f);
-            full_path == filter_with_slash
-                || full_path.starts_with(&format!("{}/", filter_with_slash))
-        }
+        Some(f) => path_under_pattern(full_path, f),
     };
     if !under_filter {
         return false;
@@ -291,6 +410,24 @@ fn should_print(full_path: &str, filter: Option<&str>, filter_depth: usize, recu
     // Non-recursive: only print at exactly filter_depth + 1
     let path_depth = full_path.trim_start_matches('/').split('/').count();
     path_depth == filter_depth + 1
+}
+
+/// Returns true if `full_path` equals `pattern`, or is nested underneath it.
+/// `pattern` is matched segment-by-segment against `full_path`'s leading
+/// segments; each pattern segment may contain `*` as a wildcard matching any
+/// sequence of characters *within that segment* (unlike the `-x` exclude
+/// patterns, a segment wildcard here does not span `/` — e.g. `Root/*`
+/// matches any direct child of `Root`, not arbitrarily deep descendants).
+fn path_under_pattern(full_path: &str, pattern: &str) -> bool {
+    let path_segments: Vec<&str> = full_path.trim_start_matches('/').split('/').collect();
+    let pattern_segments: Vec<&str> = pattern.trim_start_matches('/').split('/').collect();
+    if path_segments.len() < pattern_segments.len() {
+        return false;
+    }
+    pattern_segments
+        .iter()
+        .zip(path_segments.iter())
+        .all(|(pat, seg)| wildcard_match(pat, seg))
 }
 
 /// Returns true if `full_path` is excluded by one of the (normalised)
