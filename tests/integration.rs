@@ -264,307 +264,32 @@ fn parse_cp_args_normalises_paths() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ls_flat_no_filter_no_recursive() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
-
-    let result = ls_collect(&path, false, None, false, &[], false, &[]);
-    assert_eq!(result, vec!["/Alpha", "/Beta", "/Gamma"]);
-}
-
-#[test]
-fn ls_nested_no_filter_non_recursive_shows_only_toplevel() {
+fn ls_default_shows_everything_packages_and_elements_any_depth() {
+    // No filter, no max_depth, no type filter: the whole tree, unrestricted.
+    // There's no more "-e"/"-E" gate — AR-PACKAGE is just one more tag.
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
 
-    let result = ls_collect(&path, false, None, false, &[], false, &[]);
-    // Without -R, only direct children of the root are shown.
-    assert_eq!(result, vec!["/Root", "/Types"]);
-}
-
-#[test]
-fn ls_nested_recursive_shows_all_packages() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    let result = ls_collect(&path, false, None, true, &[], false, &[]);
-    assert_eq!(result, vec!["/Root", "/Root/Components", "/Root/Interfaces", "/Types"]);
-}
-
-#[test]
-fn ls_filter_shows_direct_children_only() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    let result = ls_collect(&path, false, Some("/Root"), false, &[], false, &[]);
-    assert_eq!(result, vec!["/Root/Components", "/Root/Interfaces"]);
-}
-
-#[test]
-fn ls_filter_recursive_shows_root_and_all_descendants() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    // With -R and filter /Root, the filter path itself is included together with
-    // all of its descendants.
-    let result = ls_collect(&path, false, Some("/Root"), true, &[], false, &[]);
-    assert_eq!(result, vec!["/Root", "/Root/Components", "/Root/Interfaces"]);
-}
-
-#[test]
-fn ls_filter_non_matching_returns_empty() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    let result = ls_collect(&path, false, Some("/DoesNotExist"), true, &[], false, &[]);
-    assert!(result.is_empty());
-}
-
-#[test]
-fn ls_filter_wildcard_matches_any_direct_child_segment() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    // "*" matches any single package segment ("Components" here), same as
-    // giving the literal path would.
-    let result = ls_collect(&path, false, Some("/Root/*"), true, &[], false, &[]);
-    assert_eq!(result, vec!["/Root/Components", "/Root/Interfaces"]);
-}
-
-#[test]
-fn ls_filter_wildcard_matches_some_siblings_but_not_others() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
-
-    // The wildcard segment only matches "Dummy*" packages, "Real" (a
-    // literal sibling that doesn't match) must be excluded even though it's
-    // at the same depth.
-    let result = ls_collect(&path, false, Some("/ComponentTypes/Dummy*"), true, &[], false, &[]);
-    assert_eq!(
-        result,
-        vec![
-            "/ComponentTypes/DummyA",
-            "/ComponentTypes/DummyA/Sub",
-            "/ComponentTypes/DummyB",
-        ]
-    );
-}
-
-#[test]
-fn ls_deep_elements_filter_wildcard_reaches_into_element_hierarchy() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
-
-
-    // Wildcard segment standing in for "Variant1", filter still reaches
-    // past the owning AR-PACKAGE into the element hierarchy.
-    let result = ls_collect(
-        &path,
-        false,
-        Some("/Root/Network/MyCluster/*/Channel1"),
-        false,
-        &[],
-        true,
-        &[s("I-SIGNAL-TRIGGERING")],
-    );
-    assert_eq!(
-        result,
-        vec![
-            "/Root/Network/MyCluster/Variant1/Channel1/Trig1",
-            "/Root/Network/MyCluster/Variant1/Channel1/Trig2",
-        ]
-    );
-}
-
-#[test]
-fn ls_exclude_top_level_package() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
-
-    let result = ls_collect(&path, false, None, false, &[s("/Beta")], false, &[]);
-    assert_eq!(result, vec!["/Alpha", "/Gamma"]);
-}
-
-#[test]
-fn ls_exclude_without_leading_slash_is_normalised() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
-
-    let result = ls_collect(&path, false, None, false, &[s("Beta")], false, &[]);
-    assert_eq!(result, vec!["/Alpha", "/Gamma"]);
-}
-
-#[test]
-fn ls_exclude_nested_package_hides_it_and_its_descendants() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    let result = ls_collect(&path, false, None, true, &[s("/Root/Components")], false, &[]);
-    assert_eq!(result, vec!["/Root", "/Root/Interfaces", "/Types"]);
-}
-
-#[test]
-fn ls_exclude_parent_package_also_hides_children() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    let result = ls_collect(&path, false, None, true, &[s("/Root")], false, &[]);
-    assert_eq!(result, vec!["/Types"]);
-}
-
-#[test]
-fn ls_exclude_wildcard_matches_multiple_packages() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
-
-    let result = ls_collect(&path, false, None, true, &[s("/ComponentTypes/Dummy*")], false, &[]);
-    assert_eq!(result, vec!["/ComponentTypes", "/ComponentTypes/Real"]);
-}
-
-#[test]
-fn ls_exclude_wildcard_also_hides_nested_descendants() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
-
-    // DummyA/Sub must disappear too, even though the wildcard pattern only
-    // directly matches "DummyA".
-    let result = ls_collect(&path, false, None, true, &[s("ComponentTypes/Dummy*")], false, &[]);
-    assert!(!result.contains(&"/ComponentTypes/DummyA/Sub".to_string()));
-}
-
-#[test]
-fn ls_exclude_wildcard_no_match_returns_everything() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
-
-    let without_exclude = ls_collect(&path, false, None, true, &[], false, &[]);
-    let with_non_matching_exclude =
-        ls_collect(&path, false, None, true, &[s("/ComponentTypes/Nope*")], false, &[]);
-    assert_eq!(without_exclude, with_non_matching_exclude);
-}
-
-#[test]
-fn ls_exclude_multiple_packages() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
-
-    let result = ls_collect(&path, false, None, false, &[s("/Alpha"), s("/Gamma")], false, &[]);
-    assert_eq!(result, vec!["/Beta"]);
-}
-
-#[test]
-fn ls_exclude_also_hides_elements_underneath() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    let result = ls_collect(&path, true, None, true, &[s("/Root/Components")], false, &[]);
-    assert_eq!(
-        result,
-        vec!["/Root", "/Root/Interfaces", "/Root/Interfaces/MySRInterface", "/Types"]
-    );
-}
-
-#[test]
-fn ls_show_elements_includes_element_names() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    // -e with filter /Root/Components, non-recursive: should show the component name.
-    let result = ls_collect(&path, true, Some("/Root/Components"), false, &[], false, &[]);
-    assert!(result.contains(&"/Root/Components/MyComponent".to_string()),
-        "Expected /Root/Components/MyComponent in {:?}", result);
-}
-
-#[test]
-fn ls_show_elements_recursive_includes_all_elements() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    let result = ls_collect(&path, true, None, true, &[], false, &[]);
-    assert!(result.contains(&"/Root/Components/MyComponent".to_string()));
-    assert!(result.contains(&"/Root/Interfaces/MySRInterface".to_string()));
-}
-
-#[test]
-fn ls_show_elements_without_recursive_does_not_include_sub_package_elements() {
-    // Regression: arx ls -e /Root must NOT show elements from /Root/Components
-    // or /Root/Interfaces unless -R is also given.
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    let result = ls_collect(&path, true, Some("/Root"), false, &[], false, &[]);
-    assert!(
-        !result.contains(&"/Root/Components/MyComponent".to_string()),
-        "Without -R, elements from sub-packages must not appear: {:?}", result
-    );
-    assert!(
-        !result.contains(&"/Root/Interfaces/MySRInterface".to_string()),
-        "Without -R, elements from sub-packages must not appear: {:?}", result
-    );
-}
-
-#[test]
-fn ls_show_elements_with_recursive_includes_sub_package_elements() {
-    // -e -R /Root must still show elements from all descendant packages.
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
-
-    let result = ls_collect(&path, true, Some("/Root"), true, &[], false, &[]);
-    assert!(
-        result.contains(&"/Root/Components/MyComponent".to_string()),
-        "With -R, elements from sub-packages must appear: {:?}", result
-    );
-    assert!(
-        result.contains(&"/Root/Interfaces/MySRInterface".to_string()),
-        "With -R, elements from sub-packages must appear: {:?}", result
-    );
-}
-
-#[test]
-fn ls_show_elements_handles_elements_declared_after_nested_packages() {
-    // Regression: a package with both nested AR-PACKAGES *and* its own
-    // ELEMENTS, where ELEMENTS is declared after AR-PACKAGES, must not leak
-    // parser state into subsequent siblings.
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "reversed.arxml", REVERSED_ORDER_ARXML);
-
-    let result = ls_collect(&path, true, None, true, &[], false, &[]);
+    let result = ls_collect(&path, None, None, &[], &[]);
     assert_eq!(
         result,
         vec![
             "/Root",
-            "/Root/PkgA",
-            "/Root/PkgA/ElemA",
-            "/Root/ElemRoot",
+            "/Root/Components",
+            "/Root/Components/MyComponent",
+            "/Root/Interfaces",
+            "/Root/Interfaces/MySRInterface",
             "/Types",
-        ],
-        "Types must be a top-level package, not nested under Root: {:?}",
-        result
+        ]
     );
 }
 
 #[test]
-fn ls_deep_elements_shallow_e_only_shows_top_level_element() {
+fn ls_default_shows_deeply_nested_elements_too() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
 
-    // -e without -E: only the first typed element under ELEMENTS, none of
-    // the deeper nested structures.
-    let result = ls_collect(&path, true, None, true, &[], false, &[]);
-    assert_eq!(
-        result,
-        vec!["/Root", "/Root/Network", "/Root/Network/MyCluster", "/Types"]
-    );
-}
-
-#[test]
-fn ls_deep_elements_capital_e_shows_full_nested_hierarchy() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
-
-    // -E: arbitrarily deep, skipping unnamed wrapper/collection tags
-    // (ETHERNET-CLUSTER-VARIANTS, PHYSICAL-CHANNELS, I-SIGNAL-TRIGGERINGS).
-    let result = ls_collect(&path, false, None, true, &[], true, &[]);
+    let result = ls_collect(&path, None, None, &[], &[]);
     assert_eq!(
         result,
         vec![
@@ -581,15 +306,140 @@ fn ls_deep_elements_capital_e_shows_full_nested_hierarchy() {
 }
 
 #[test]
-fn ls_deep_elements_type_filter_matches_single_type() {
+fn ls_type_filter_ar_package_reproduces_package_only_listing() {
+    // "AR-PACKAGE" is a type like any other: `-t AR-PACKAGE` is how you get
+    // the old "packages only, no elements" behaviour.
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, None, None, &[], &[s("AR-PACKAGE")]);
+    assert_eq!(result, vec!["/Root", "/Root/Components", "/Root/Interfaces", "/Types"]);
+}
+
+#[test]
+fn ls_max_depth_one_without_filter_shows_only_toplevel_packages() {
+    // Without a filter, depth is measured from the implicit root, so
+    // --max-depth 1 reproduces the old default output (top-level packages
+    // only — elements are always nested deeper than that).
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    let result = ls_collect(&path, None, Some(1), &[], &[]);
+    assert_eq!(result, vec!["/Alpha", "/Beta", "/Gamma"]);
+}
+
+#[test]
+fn ls_max_depth_one_without_filter_excludes_nested_packages_and_elements() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, None, Some(1), &[], &[]);
+    assert_eq!(result, vec!["/Root", "/Types"]);
+}
+
+#[test]
+fn ls_max_depth_zero_without_filter_shows_nothing() {
+    // There's no real node for the implicit root, so --max-depth 0 without
+    // a filter has nothing to show.
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    let result = ls_collect(&path, None, Some(0), &[], &[]);
+    assert!(result.is_empty());
+}
+
+#[test]
+fn ls_filter_max_depth_zero_shows_only_the_match_itself() {
+    // Mirrors `find -maxdepth 0`: only the filter target itself.
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, Some("/Root"), Some(0), &[], &[]);
+    assert_eq!(result, vec!["/Root"]);
+}
+
+#[test]
+fn ls_filter_max_depth_one_shows_match_and_direct_children() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, Some("/Root"), Some(1), &[], &[]);
+    assert_eq!(result, vec!["/Root", "/Root/Components", "/Root/Interfaces"]);
+}
+
+#[test]
+fn ls_filter_without_max_depth_shows_match_and_all_descendants() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, Some("/Root"), None, &[], &[]);
+    assert_eq!(
+        result,
+        vec![
+            "/Root",
+            "/Root/Components",
+            "/Root/Components/MyComponent",
+            "/Root/Interfaces",
+            "/Root/Interfaces/MySRInterface",
+        ]
+    );
+}
+
+#[test]
+fn ls_filter_non_matching_returns_empty() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, Some("/DoesNotExist"), None, &[], &[]);
+    assert!(result.is_empty());
+}
+
+#[test]
+fn ls_filter_wildcard_matches_any_direct_child_segment() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    // "*" matches any single package segment ("Components"/"Interfaces"
+    // here). max_depth 0 isolates "does the wildcard select the right
+    // matches" from any further descendants.
+    let result = ls_collect(&path, Some("/Root/*"), Some(0), &[], &[]);
+    assert_eq!(result, vec!["/Root/Components", "/Root/Interfaces"]);
+}
+
+#[test]
+fn ls_filter_wildcard_matches_some_siblings_but_not_others() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
+
+    // The wildcard segment only matches "Dummy*" packages, "Real" (a
+    // literal sibling that doesn't match) must be excluded even though it's
+    // at the same depth.
+    let result = ls_collect(&path, Some("/ComponentTypes/Dummy*"), None, &[], &[]);
+    assert_eq!(
+        result,
+        vec![
+            "/ComponentTypes/DummyA",
+            "/ComponentTypes/DummyA/Sub",
+            "/ComponentTypes/DummyB",
+        ]
+    );
+}
+
+#[test]
+fn ls_filter_wildcard_reaches_into_element_hierarchy() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
 
-    // -E -t I-SIGNAL-TRIGGERING: still traverses through cluster/variant/
-    // channel, but only *outputs* matching elements. AR-PACKAGE paths are
-    // suppressed entirely once a type filter is active — the user wants a
-    // flat list of matching objects, not the surrounding package structure.
-    let result = ls_collect(&path, false, None, true, &[], true, &[s("I-SIGNAL-TRIGGERING")]);
+    // Wildcard segment standing in for "Variant1"; the filter reaches past
+    // the owning AR-PACKAGE into the element hierarchy itself, and -t
+    // narrows the (unlimited-depth) result to just the matching type.
+    let result = ls_collect(
+        &path,
+        Some("/Root/Network/MyCluster/*/Channel1"),
+        None,
+        &[],
+        &[s("I-SIGNAL-TRIGGERING")],
+    );
     assert_eq!(
         result,
         vec![
@@ -600,17 +450,143 @@ fn ls_deep_elements_type_filter_matches_single_type() {
 }
 
 #[test]
-fn ls_deep_elements_type_filter_matches_multiple_types() {
+fn ls_exclude_top_level_package() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    let result = ls_collect(&path, None, None, &[s("/Beta")], &[]);
+    assert_eq!(result, vec!["/Alpha", "/Gamma"]);
+}
+
+#[test]
+fn ls_exclude_without_leading_slash_is_normalised() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    let result = ls_collect(&path, None, None, &[s("Beta")], &[]);
+    assert_eq!(result, vec!["/Alpha", "/Gamma"]);
+}
+
+#[test]
+fn ls_exclude_nested_package_hides_it_and_its_descendants() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, None, None, &[s("/Root/Components")], &[s("AR-PACKAGE")]);
+    assert_eq!(result, vec!["/Root", "/Root/Interfaces", "/Types"]);
+}
+
+#[test]
+fn ls_exclude_parent_package_also_hides_children() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, None, None, &[s("/Root")], &[s("AR-PACKAGE")]);
+    assert_eq!(result, vec!["/Types"]);
+}
+
+#[test]
+fn ls_exclude_wildcard_matches_multiple_packages() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
+
+    let result = ls_collect(&path, None, None, &[s("/ComponentTypes/Dummy*")], &[]);
+    assert_eq!(result, vec!["/ComponentTypes", "/ComponentTypes/Real"]);
+}
+
+#[test]
+fn ls_exclude_wildcard_also_hides_nested_descendants() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
+
+    // DummyA/Sub must disappear too, even though the wildcard pattern only
+    // directly matches "DummyA".
+    let result = ls_collect(&path, None, None, &[s("ComponentTypes/Dummy*")], &[]);
+    assert!(!result.contains(&"/ComponentTypes/DummyA/Sub".to_string()));
+}
+
+#[test]
+fn ls_exclude_wildcard_no_match_returns_everything() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "wildcard.arxml", WILDCARD_ARXML);
+
+    let without_exclude = ls_collect(&path, None, None, &[], &[]);
+    let with_non_matching_exclude = ls_collect(&path, None, None, &[s("/ComponentTypes/Nope*")], &[]);
+    assert_eq!(without_exclude, with_non_matching_exclude);
+}
+
+#[test]
+fn ls_exclude_multiple_packages() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "flat.arxml", FLAT_ARXML);
+
+    let result = ls_collect(&path, None, None, &[s("/Alpha"), s("/Gamma")], &[]);
+    assert_eq!(result, vec!["/Beta"]);
+}
+
+#[test]
+fn ls_exclude_also_hides_elements_underneath() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested.arxml", NESTED_ARXML);
+
+    let result = ls_collect(&path, None, None, &[s("/Root/Components")], &[]);
+    assert_eq!(
+        result,
+        vec!["/Root", "/Root/Interfaces", "/Root/Interfaces/MySRInterface", "/Types"]
+    );
+}
+
+#[test]
+fn ls_show_elements_handles_elements_declared_after_nested_packages() {
+    // Regression: a package with both nested AR-PACKAGES *and* its own
+    // ELEMENTS, where ELEMENTS is declared after AR-PACKAGES, must not leak
+    // parser state into subsequent siblings.
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "reversed.arxml", REVERSED_ORDER_ARXML);
+
+    let result = ls_collect(&path, None, None, &[], &[]);
+    assert_eq!(
+        result,
+        vec![
+            "/Root",
+            "/Root/PkgA",
+            "/Root/PkgA/ElemA",
+            "/Root/ElemRoot",
+            "/Types",
+        ],
+        "Types must be a top-level package, not nested under Root: {:?}",
+        result
+    );
+}
+
+#[test]
+fn ls_type_filter_matches_single_type() {
+    // -t suppresses everything else (including AR-PACKAGE paths) — the user
+    // wants a flat list of matching objects, not the surrounding structure.
+    // Non-matching ancestors are still silently traversed to reach them.
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
+
+    let result = ls_collect(&path, None, None, &[], &[s("I-SIGNAL-TRIGGERING")]);
+    assert_eq!(
+        result,
+        vec![
+            "/Root/Network/MyCluster/Variant1/Channel1/Trig1",
+            "/Root/Network/MyCluster/Variant1/Channel1/Trig2",
+        ]
+    );
+}
+
+#[test]
+fn ls_type_filter_matches_multiple_types() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
 
     let result = ls_collect(
         &path,
-        false,
         None,
-        true,
+        None,
         &[],
-        true,
         &[s("I-SIGNAL-TRIGGERING"), s("ETHERNET-CLUSTER")],
     );
     assert_eq!(
@@ -624,57 +600,32 @@ fn ls_deep_elements_type_filter_matches_multiple_types() {
 }
 
 #[test]
-fn ls_deep_elements_type_filter_no_match_returns_nothing() {
+fn ls_type_filter_no_match_returns_nothing() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
 
-    let result = ls_collect(&path, false, None, true, &[], true, &[s("DOES-NOT-EXIST")]);
+    let result = ls_collect(&path, None, None, &[], &[s("DOES-NOT-EXIST")]);
     assert!(result.is_empty(), "Expected no results, got {:?}", result);
 }
 
 #[test]
-fn ls_deep_elements_ignores_recursive_flag_once_package_is_visible() {
-    let dir = TempDir::new().unwrap();
-    let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
-
-    // -E is independent of -R: once /Root/Network itself is targeted by the
-    // filter (even without -R), its elements are shown at full depth.
-    let result = ls_collect(&path, false, Some("/Root/Network"), false, &[], true, &[]);
-    assert_eq!(
-        result,
-        vec![
-            "/Root/Network/MyCluster",
-            "/Root/Network/MyCluster/Variant1",
-            "/Root/Network/MyCluster/Variant1/Channel1",
-            "/Root/Network/MyCluster/Variant1/Channel1/Trig1",
-            "/Root/Network/MyCluster/Variant1/Channel1/Trig2",
-        ]
-    );
-}
-
-#[test]
-fn ls_deep_elements_filter_reaches_past_package_into_element_hierarchy() {
-    // Regression: /filter/path may point *past* the owning AR-PACKAGE, deep
-    // into the nested named-element hierarchy itself (e.g. targeting a
-    // specific channel inside a cluster), without -R.
+fn ls_filter_deep_into_element_hierarchy_without_max_depth() {
+    // /filter/path may point *past* the owning AR-PACKAGE, deep into the
+    // nested named-element hierarchy itself (e.g. targeting a specific
+    // channel inside a cluster) — no special flag needed for this anymore.
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
 
     let result = ls_collect(
         &path,
-        false,
         Some("/Root/Network/MyCluster/Variant1/Channel1"),
-        false,
+        None,
         &[],
-        true,
         &[],
     );
     assert_eq!(
         result,
         vec![
-            // -E behaves like -R for the element portion, so the exact
-            // filter match itself is included too (consistent with how -R
-            // includes the filter package itself for AR-PACKAGE filters).
             "/Root/Network/MyCluster/Variant1/Channel1",
             "/Root/Network/MyCluster/Variant1/Channel1/Trig1",
             "/Root/Network/MyCluster/Variant1/Channel1/Trig2",
@@ -683,17 +634,15 @@ fn ls_deep_elements_filter_reaches_past_package_into_element_hierarchy() {
 }
 
 #[test]
-fn ls_deep_elements_filter_past_package_with_type_filter() {
+fn ls_filter_deep_into_element_hierarchy_with_type_filter() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
 
     let result = ls_collect(
         &path,
-        false,
         Some("/Root/Network/MyCluster/Variant1"),
-        false,
+        None,
         &[],
-        true,
         &[s("I-SIGNAL-TRIGGERING")],
     );
     assert_eq!(
@@ -771,7 +720,7 @@ fn find_package_ranges_unknown_package_returns_empty() {
 
 /// Parse an ARXML output file and return the SHORT-NAMEs of its top-level AR-PACKAGEs.
 fn toplevel_package_names(path: &str) -> Vec<String> {
-    ls_collect(path, false, None, false, &[], false, &[])
+    ls_collect(path, None, Some(1), &[], &[])
         .into_iter()
         .map(|p| p.trim_start_matches('/').to_string())
         .collect()
@@ -885,7 +834,7 @@ fn cmd_cp_preserves_nested_content() {
     cmd_cp(&input, &groups, None);
 
     // Sub-packages of Root must still be present.
-    let names = ls_collect(&output, false, None, true, &[], false, &[]);
+    let names = ls_collect(&output, None, None, &[], &[]);
     assert!(names.contains(&"/Root/Components".to_string()));
     assert!(names.contains(&"/Root/Interfaces".to_string()));
 }
@@ -977,7 +926,7 @@ fn cmd_rm_preserves_remaining_package_content() {
 
     cmd_rm(&path, &[s("Types")]);
 
-    let names = ls_collect(&path, false, None, true, &[], false, &[]);
+    let names = ls_collect(&path, None, None, &[], &[]);
     assert!(names.contains(&"/Root".to_string()));
     assert!(names.contains(&"/Root/Components".to_string()));
     assert!(names.contains(&"/Root/Interfaces".to_string()));
@@ -1028,11 +977,11 @@ fn cmd_rm_removes_element_from_package() {
     cmd_rm(&path, &pkgs);
 
     // Package must still exist
-    let names = ls_collect(&path, false, None, true, &[], false, &[]);
+    let names = ls_collect(&path, None, None, &[], &[]);
     assert!(names.contains(&"/Root/Components".to_string()));
 
     // Element must be gone
-    let elements = ls_collect(&path, true, Some("/Root/Components"), false, &[], false, &[]);
+    let elements = ls_collect(&path, Some("/Root/Components"), Some(1), &[], &[]);
     assert!(!elements.contains(&"/Root/Components/MyComponent".to_string()),
         "MyComponent should have been removed, got: {:?}", elements);
 }
@@ -1046,7 +995,7 @@ fn cmd_rm_element_leaves_sibling_elements_intact() {
     let pkgs = parse_rm_args(&[s("Root/Components/MyComponent")]);
     cmd_rm(&path, &pkgs);
 
-    let elements = ls_collect(&path, true, Some("/Root/Interfaces"), false, &[], false, &[]);
+    let elements = ls_collect(&path, Some("/Root/Interfaces"), Some(1), &[], &[]);
     assert!(elements.contains(&"/Root/Interfaces/MySRInterface".to_string()),
         "MySRInterface should still be present, got: {:?}", elements);
 }
@@ -1060,7 +1009,7 @@ fn cmd_rm_element_result_is_valid_arxml() {
     cmd_rm(&path, &pkgs);
 
     // ls_collect must be able to parse the result without errors
-    let names = ls_collect(&path, false, None, true, &[], false, &[]);
+    let names = ls_collect(&path, None, None, &[], &[]);
     assert!(names.contains(&"/Root".to_string()));
     assert!(names.contains(&"/Root/Interfaces".to_string()));
 }

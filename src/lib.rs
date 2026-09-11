@@ -61,43 +61,35 @@ pub fn write_arxml_footer<W: Write>(out: &mut BufWriter<W>) {
 
 pub fn cmd_ls(
     path: &str,
-    show_elements: bool,
     filter: Option<&str>,
-    recursive: bool,
+    max_depth: Option<usize>,
     excludes: &[String],
-    deep_elements: bool,
     type_filter: &[String],
 ) {
-    for line in ls_collect(path, show_elements, filter, recursive, excludes, deep_elements, type_filter) {
+    for line in ls_collect(path, filter, max_depth, excludes, type_filter) {
         println!("{}", line);
     }
 }
 
-/// What kind of named node this is.
-enum NodeKind {
-    /// An `AR-PACKAGE`.
-    Package,
-    /// A named element somewhere inside a package's `ELEMENTS` subtree.
-    /// `tag` is the element's own XML tag name (e.g. `I-SIGNAL-TRIGGERING`).
-    /// `depth` is 1 for the first typed element directly under `ELEMENTS`,
-    /// 2 for its named children, and so on (unnamed wrapper/collection tags,
-    /// e.g. `PHYSICAL-CHANNELS`, don't count towards this depth).
-    Element { tag: String, depth: usize },
-}
-
 /// One node in the [`Tree`] arena. `parent` is an index into `Tree::nodes`
 /// (`None` for a top-level `AR-PACKAGE`).
+///
+/// There is no separate "package" vs. "element" distinction in the data
+/// model — an `AR-PACKAGE` is simply a node whose own `tag` happens to be
+/// `"AR-PACKAGE"`, exactly like `I-SIGNAL-TRIGGERING` or any other element
+/// type. `-t AR-PACKAGE` filters to just packages the same way `-t
+/// I-SIGNAL-TRIGGERING` filters to just triggerings.
 struct Node {
     name: String,
-    kind: NodeKind,
+    tag: String,
     parent: Option<usize>,
 }
 
 /// Arena-based tree of every named `AR-PACKAGE` and every named element (at
 /// any nesting depth) found in an ARXML file. Built once via [`build_tree`]
 /// in a single streaming pass; independent of any `ls` filtering options
-/// (`-e`/`-E`/`-R`/filter path/`-t`/`-x`), which are all applied afterwards
-/// by [`query_tree`].
+/// (`-t`/`-d`/`-x`/filter path), which are all applied afterwards by
+/// [`query_tree`].
 ///
 /// Nodes reference their parent by index instead of each storing its own
 /// full path string, so a node's name is kept exactly once no matter how
@@ -110,8 +102,8 @@ struct Tree {
 impl Tree {
     /// Reconstructs the full `/`-separated path of `idx` by walking up the
     /// `parent` chain. Only called (by `query_tree`) for nodes that already
-    /// passed the cheap pre-filters (type, depth), so the cost is
-    /// proportional to the number of *matches*, not the size of the tree.
+    /// passed the cheap pre-filters (type), so the cost is proportional to
+    /// the number of *matches*, not the size of the tree.
     fn full_path(&self, idx: usize) -> String {
         let mut segments = Vec::new();
         let mut cur = Some(idx);
@@ -218,7 +210,7 @@ fn build_tree(path: &str) -> Tree {
                     capturing_short_name = false;
 
                     let parent = package_stack.last().copied();
-                    nodes.push(Node { name: short_name, kind: NodeKind::Package, parent });
+                    nodes.push(Node { name: short_name, tag: "AR-PACKAGE".to_string(), parent });
                     package_stack.push(nodes.len() - 1);
                 } else if capturing_element_short_name {
                     let short_name = e.unescape().unwrap_or_default().into_owned();
@@ -238,13 +230,8 @@ fn build_tree(path: &str) -> Tree {
                             .last()
                             .copied()
                             .or_else(|| package_stack.last().copied());
-                        let elem_depth = frame.named_stack.len() + 1;
 
-                        nodes.push(Node {
-                            name: short_name,
-                            kind: NodeKind::Element { tag: tag_name, depth: elem_depth },
-                            parent,
-                        });
+                        nodes.push(Node { name: short_name, tag: tag_name, parent });
                         frame.named_stack.push(nodes.len() - 1);
                     }
                 }
@@ -288,76 +275,48 @@ fn build_tree(path: &str) -> Tree {
 /// returning the paths that should be printed, in the same order the nodes
 /// were encountered while building the tree (i.e. document order).
 ///
-/// - `deep_elements`: if true, include nested named elements at any depth
-///   (e.g. `ETHERNET-CLUSTER-VARIANTS/.../I-SIGNAL-TRIGGERINGS`), not just
-///   the first typed element directly under `ELEMENTS`. Independent of
-///   `recursive`, which only governs AR-PACKAGE recursion for package nodes.
-/// - `type_filter`: if non-empty, only include element nodes whose own XML
-///   tag name (e.g. `I-SIGNAL-TRIGGERING`) matches one of the given names,
-///   and suppress AR-PACKAGE paths entirely (the user wants a flat list of
-///   matching objects, not the surrounding package structure).
+/// - `max_depth`: `None` means unlimited (the default — every matching node,
+///   however deep). `Some(0)` means only the exact `filter` match itself (or
+///   nothing, if there's no filter — there's no real node for the implicit
+///   root). `Some(n)` means the filter match plus up to `n` levels of
+///   descendants. Without a filter, depth is counted from the implicit root,
+///   so `Some(1)` yields exactly the top-level AR-PACKAGEs.
+/// - `type_filter`: if non-empty, only include nodes whose own XML tag
+///   matches one of the given names. `AR-PACKAGE` is a valid tag name here
+///   like any other — there's no automatic package/element distinction.
 fn query_tree(
     tree: &Tree,
-    show_elements: bool,
     filter: Option<&str>,
-    recursive: bool,
+    max_depth: Option<usize>,
     excludes: &[String],
-    deep_elements: bool,
     type_filter: &[String],
 ) -> Vec<String> {
     let filter = filter.map(|f| normalise_path(f));
     let excludes: Vec<String> = excludes.iter().map(|e| normalise_path(e)).collect();
-    // Deep element traversal implies elements are shown at all.
-    let show_elements = show_elements || deep_elements;
     // Depth of the filter path (0 = no filter, 1 = /Root, 2 = /Root/Components, ...)
     let filter_depth = filter.as_deref().map(|f| f.split('/').count()).unwrap_or(0);
 
     let mut results = Vec::new();
 
     for idx in 0..tree.nodes.len() {
-        match &tree.nodes[idx].kind {
-            NodeKind::Package => {
-                if !type_filter.is_empty() {
-                    continue;
-                }
-                let full = tree.full_path(idx);
-                if should_print(&full, filter.as_deref(), filter_depth, recursive)
-                    && !is_excluded(&full, &excludes)
-                {
-                    results.push(full);
-                }
-            }
-            NodeKind::Element { tag, depth } => {
-                if !show_elements {
-                    continue;
-                }
-                // Shallow mode (-e only): just the first typed element
-                // directly under ELEMENTS. Deep mode (-E): any depth.
-                if !deep_elements && *depth != 1 {
-                    continue;
-                }
-                if !type_filter.is_empty() && !type_filter.iter().any(|t| t == tag) {
-                    continue;
-                }
+        let node = &tree.nodes[idx];
 
-                // Only build the full path (walking up the arena) once the
-                // cheap checks above already passed — cost is proportional
-                // to the number of matches, not the size of the whole tree.
-                let full = tree.full_path(idx);
-
-                // Visibility uses the *full* path (packages + element
-                // segments) against the filter, so a /filter/path may reach
-                // past the owning package into the element hierarchy itself
-                // (e.g. /Root/Cluster/Variant/Channel). -E makes this
-                // "recursive" for the element portion, independent of -R
-                // (which only governs AR-PACKAGE recursion for packages).
-                let visible = should_print(&full, filter.as_deref(), filter_depth, recursive || deep_elements);
-
-                if visible && !is_excluded(&full, &excludes) {
-                    results.push(full);
-                }
-            }
+        // Cheap check first: skip entirely without ever building the full
+        // path if the type doesn't match.
+        if !type_filter.is_empty() && !type_filter.iter().any(|t| t == &node.tag) {
+            continue;
         }
+
+        let full = tree.full_path(idx);
+
+        if !is_within_depth(&full, filter.as_deref(), filter_depth, max_depth) {
+            continue;
+        }
+        if is_excluded(&full, &excludes) {
+            continue;
+        }
+
+        results.push(full);
     }
 
     results
@@ -367,49 +326,44 @@ fn query_tree(
 /// Separated from `cmd_ls` so it can be called in tests without capturing
 /// stdout. Internally builds a [`Tree`] of the whole file once (see
 /// [`build_tree`]), then filters it (see [`query_tree`]).
-///
-/// - `deep_elements`: if true, recurse arbitrarily deep into nested named
-///   elements (e.g. `ETHERNET-CLUSTER-VARIANTS/.../I-SIGNAL-TRIGGERINGS`),
-///   not just the first typed element directly under `ELEMENTS`. Independent
-///   of `recursive`, which only governs AR-PACKAGE recursion.
-/// - `type_filter`: if non-empty, only include element nodes whose own XML
-///   tag name (e.g. `I-SIGNAL-TRIGGERING`) matches one of the given names.
-///   Non-matching ancestors are still traversed (to reach matching
-///   descendants), just not included in the output themselves.
 pub fn ls_collect(
     path: &str,
-    show_elements: bool,
     filter: Option<&str>,
-    recursive: bool,
+    max_depth: Option<usize>,
     excludes: &[String],
-    deep_elements: bool,
     type_filter: &[String],
 ) -> Vec<String> {
     let tree = build_tree(path);
-    query_tree(&tree, show_elements, filter, recursive, excludes, deep_elements, type_filter)
+    query_tree(&tree, filter, max_depth, excludes, type_filter)
 }
 
-/// Returns true if `full_path` should be printed.
-/// - filter: optional prefix the path must be under (or equal to). May
-///   contain `*` wildcards per path segment (e.g. `Root/*/Channel1`) — see
-///   [`path_under_pattern`].
-/// - filter_depth: number of segments in the filter path
-/// - recursive: if false, only print direct children (depth == filter_depth + 1)
-fn should_print(full_path: &str, filter: Option<&str>, filter_depth: usize, recursive: bool) -> bool {
-    // Check prefix constraint
-    let under_filter = match filter {
+/// Returns true if `full_path` should be printed, given an optional `filter`
+/// pattern (see [`path_under_pattern`]) and an optional `max_depth` relative
+/// to that filter (or to the implicit root, if there's no filter):
+/// - `None`: unlimited depth.
+/// - `Some(0)`: only the filter match itself.
+/// - `Some(n)`: the filter match plus up to `n` levels of descendants.
+///
+/// Mirrors `find`'s `-maxdepth`: the starting point counts as depth 0.
+fn is_within_depth(
+    full_path: &str,
+    filter: Option<&str>,
+    filter_depth: usize,
+    max_depth: Option<usize>,
+) -> bool {
+    if let Some(f) = filter {
+        if !path_under_pattern(full_path, f) {
+            return false;
+        }
+    }
+    match max_depth {
         None => true,
-        Some(f) => path_under_pattern(full_path, f),
-    };
-    if !under_filter {
-        return false;
+        Some(max) => {
+            let path_depth = full_path.trim_start_matches('/').split('/').count();
+            let rel_depth = path_depth.saturating_sub(filter_depth);
+            rel_depth <= max
+        }
     }
-    if recursive {
-        return true;
-    }
-    // Non-recursive: only print at exactly filter_depth + 1
-    let path_depth = full_path.trim_start_matches('/').split('/').count();
-    path_depth == filter_depth + 1
 }
 
 /// Returns true if `full_path` equals `pattern`, or is nested underneath it.
@@ -719,10 +673,28 @@ pub const COLORS_OFF: Colors = Colors {
     reset:  "",
 };
 
-/// Collect all AR-PACKAGE and ELEMENTS paths from an ARXML file as a sorted vec.
+/// Collect all AR-PACKAGE and top-level ELEMENTS paths from an ARXML file as
+/// a sorted vec, for `arx diff`'s structural comparison. Unlike `arx ls`
+/// (which shows nested elements at any depth via `-t`), this stays at
+/// `diff`'s documented scope: AR-PACKAGEs (any depth) plus each package's
+/// direct (first-level) elements — not their internals.
 /// If `filter` is given, only paths under that AR-PACKAGE prefix are returned.
 pub fn collect_all_paths(path: &str, filter: Option<&str>) -> Vec<String> {
-    let mut paths = ls_collect(path, true, filter, true, &[], false, &[]);
+    let tree = build_tree(path);
+    let filter = filter.map(|f| normalise_path(f));
+
+    let mut paths: Vec<String> = tree
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| {
+            node.tag == "AR-PACKAGE"
+                || matches!(node.parent, Some(p) if tree.nodes[p].tag == "AR-PACKAGE")
+        })
+        .map(|(idx, _)| tree.full_path(idx))
+        .filter(|full| filter.as_deref().map_or(true, |f| path_under_pattern(full, f)))
+        .collect();
+
     paths.sort();
     paths
 }

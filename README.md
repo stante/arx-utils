@@ -18,76 +18,74 @@ arx <command> [args...]
 
 ## Commands
 
-### `arx ls` — List AR-Packages
+### `arx ls` — List AR-Packages and elements
 
-Lists all `AR-PACKAGE` paths in an ARXML file.
+Lists all `AR-PACKAGE` paths and named elements in an ARXML file. There is no
+`AR-PACKAGE`-vs-element distinction in the output — a package is simply a
+node whose own tag happens to be `AR-PACKAGE`, exactly like
+`I-SIGNAL-TRIGGERING` or any other element type. By default, `ls` shows
+**everything**: all packages and all named elements, at any nesting depth
+(cluster → variant → channel → triggering, however deep).
 
 ```
-arx ls [-e] [-E] [-R] [-x <path>]... [-t <type>]... [/filter/path] <file.arxml>
+arx ls [-d <n>|--max-depth <n>] [-t <type>]... [-x <path>]... [/filter/path] <file.arxml>
 ```
 
 **Options:**
 
 | Option | Description |
 |---|---|
-| `-e` | Also show top-level `ELEMENTS` entries (e.g. component names) directly inside packages |
-| `-E` | Like `-e`, but recurse arbitrarily deep into nested named sub-elements (e.g. cluster → variant → channel → triggering). Independent of `-R` |
-| `-R` | Recursive — show all descendant packages, not just direct children |
-| `-x <path>` | Exclude this `AR-PACKAGE` (and everything under it) from the output. Supports `*` as a wildcard and may be repeated |
-| `-t <type>` | Only with `-e`/`-E`: only show elements whose own XML tag matches this type name (e.g. `I-SIGNAL-TRIGGERING`). Repeatable (OR-matched). Once `-t` is used, `AR-PACKAGE` paths are suppressed entirely — output is just the flat list of matching elements' full paths. Non-matching ancestors are still traversed (silently) to reach matching descendants |
-| `/filter/path` | Only show packages (and, with `-e`/`-E`, elements) under this AUTOSAR path prefix. With `-E`, the path may reach past the owning `AR-PACKAGE` into the nested element hierarchy itself |
+| `-d <n>` / `--max-depth <n>` | Limit output to `n` levels below the `/filter/path` match (or below the implicit root, if no filter). `0` = only the match itself, `1` = match + direct children, etc. Mirrors `find -maxdepth`. Omit for unlimited depth (the default) |
+| `-t <type>` | Only show nodes whose own XML tag matches this type name (e.g. `AR-PACKAGE`, `I-SIGNAL-TRIGGERING`). Repeatable (OR-matched). Non-matching ancestors are still traversed (silently) to reach matching descendants |
+| `-x <path>` | Exclude this path (package or element, and everything under it) from the output. Supports `*` as a wildcard and may be repeated |
+| `/filter/path` | Only show nodes under this path prefix — packages or, at any depth, named elements (e.g. `/Root/Cluster/Variant1/Channel1`) |
 
-`-x` patterns support `*` as a wildcard matching any sequence of characters
-(including `/`), so a pattern doesn't have to name an exact package — e.g.
-`/ComponentTypes/Dummy*` excludes every package under `/ComponentTypes` whose
-name starts with `Dummy`, along with all of their descendants. Quote the
-pattern (e.g. `'/ComponentTypes/Dummy*'`) on shells that would otherwise
-expand `*` themselves.
+`-t AR-PACKAGE` is how you get a "packages only" listing (the old default
+before elements were unified into the same tree).
 
-`-E` walks through wrapper/collection tags that have no `SHORT-NAME` of their
-own (e.g. `ETHERNET-CLUSTER-VARIANTS`, `PHYSICAL-CHANNELS`,
-`I-SIGNAL-TRIGGERINGS`) without adding them as path segments — only elements
-that actually have their own `SHORT-NAME` show up in the output.
+`/filter/path` isn't limited to `AR-PACKAGE` boundaries — it may point at any
+named element, however deep. Unlike `-x`, its wildcard segments (`*`) don't
+span `/` — `/Root/*/Channel1` matches `Channel1` under any direct child of
+`Root`, not arbitrarily deep descendants.
 
-With `-E`, `/filter/path` isn't limited to `AR-PACKAGE` boundaries — it may
-point at any named element, however deep, e.g.
-`/Root/Cluster/Variant1/Channel1`. Everything under that path is then shown
-(the exact match itself is included too, the same way `-R` includes the
-filter package itself), independent of `-R`.
+`-x` patterns *do* span `/`, so a pattern doesn't have to name an exact
+node — e.g. `/ComponentTypes/Dummy*` excludes every package under
+`/ComponentTypes` whose name starts with `Dummy`, along with all of their
+descendants. Quote the pattern (e.g. `'/ComponentTypes/Dummy*'`) on shells
+that would otherwise expand `*` themselves.
 
-`/filter/path` segments may also contain `*` as a wildcard, e.g.
-`/Root/*/Channel1` matches `Channel1` under any direct child of `Root`.
-Unlike `-x`, a filter wildcard matches only *within* a single segment — it
-does not span `/` — so the pattern's segment count still determines what
-"direct child" means for the non-`-R` case.
+Wrapper/collection tags that have no `SHORT-NAME` of their own (e.g.
+`ETHERNET-CLUSTER-VARIANTS`, `PHYSICAL-CHANNELS`, `I-SIGNAL-TRIGGERINGS`) are
+traversed but never appear as path segments — only nodes that actually have
+their own `SHORT-NAME` show up in the output.
 
 **Examples:**
 
 ```sh
-# List all top-level packages
+# List everything: every package and every element, at any depth
 arx ls model.arxml
 
-# List all packages recursively
-arx ls -R model.arxml
+# Packages only, at any depth (old plain "ls -R" behaviour)
+arx ls -t AR-PACKAGE model.arxml
 
-# List direct children of /Root/Components
-arx ls /Root/Components model.arxml
+# Top-level packages only (old plain "ls" default, before elements existed)
+arx ls -d 1 model.arxml
 
-# List everything under /Root/Components including elements
-arx ls -R -e /Root/Components model.arxml
-
-# List everything recursively, but skip /Root/Components entirely
-arx ls -R -x /Root/Components model.arxml
-
-# Exclude all packages under /ComponentTypes whose name starts with "Dummy"
-arx ls -R -x /ComponentTypes/Dummy* model.arxml
+# List direct children of /Root/Components (packages and/or elements)
+arx ls -d 1 /Root/Components model.arxml
 
 # List every I-SIGNAL-TRIGGERING anywhere in the file, however deeply nested
-arx ls -R -E -t I-SIGNAL-TRIGGERING model.arxml
+arx ls -t I-SIGNAL-TRIGGERING model.arxml
 
-# List every I-SIGNAL-TRIGGERING under one specific channel (no -R needed —
-# the filter already reaches into the element hierarchy)
-arx ls -E -t I-SIGNAL-TRIGGERING /Root/Cluster/Variant1/Channel1 model.arxml
+# List everything, but skip /Root/Components entirely
+arx ls -x /Root/Components model.arxml
+
+# Exclude all packages under /ComponentTypes whose name starts with "Dummy"
+arx ls -x /ComponentTypes/Dummy* model.arxml
+
+# List every I-SIGNAL-TRIGGERING under one specific channel — the filter
+# already reaches into the element hierarchy, no extra flag needed
+arx ls -t I-SIGNAL-TRIGGERING /Root/Cluster/Variant1/Channel1 model.arxml
 ```
 
 ---

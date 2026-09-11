@@ -1,14 +1,13 @@
 use std::env;
 use arx_utils::cmd_ls;
 
-const USAGE: &str = "Usage: arx-ls [-e] [-E] [-R] [-x <path>]... [-t <type>]... [/filter/path] <file.arxml>";
+const USAGE: &str =
+    "Usage: arx-ls [-d <n>|--max-depth <n>] [-t <type>]... [-x <path>]... [/filter/path] <file.arxml>";
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    let mut show_elements = false;
-    let mut deep_elements = false;
-    let mut recursive = false;
+    let mut max_depth: Option<usize> = None;
     let mut filter: Option<String> = None;
     let mut excludes: Vec<String> = Vec::new();
     let mut type_filter: Vec<String> = Vec::new();
@@ -17,9 +16,18 @@ fn main() {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "-e" => show_elements = true,
-            "-E" => deep_elements = true,
-            "-R" => recursive = true,
+            "-d" | "--max-depth" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: {} requires a number argument.", args[i - 1]);
+                    eprintln!("{}", USAGE);
+                    std::process::exit(1);
+                }
+                max_depth = Some(args[i].parse::<usize>().unwrap_or_else(|_| {
+                    eprintln!("Error: invalid --max-depth value '{}'.", args[i]);
+                    std::process::exit(1);
+                }));
+            }
             "-x" => {
                 i += 1;
                 if i >= args.len() {
@@ -58,13 +66,5 @@ fn main() {
         std::process::exit(1);
     });
 
-    cmd_ls(
-        &path,
-        show_elements,
-        filter.as_deref(),
-        recursive,
-        &excludes,
-        deep_elements,
-        &type_filter,
-    );
+    cmd_ls(&path, filter.as_deref(), max_depth, &excludes, &type_filter);
 }

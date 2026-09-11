@@ -37,8 +37,8 @@ tests/
 
 ## Commands
 
-### `arx ls [-e] [-E] [-R] [-x <path>]... [-t <type>]... [/filter] <file.arxml>`
-Lists AR-PACKAGE paths. `-e` includes top-level ELEMENTS entries, `-E` recurses arbitrarily deep into nested named sub-elements (independent of `-R`; skips unnamed wrapper/collection tags in the path), `-R` recurses into sub-packages, `-x <path>` excludes a package (and everything under it, `*` wildcard supported) and may be repeated, `-t <type>` (with `-e`/`-E`) only shows elements whose own tag matches this type name and suppresses AR-PACKAGE paths entirely (repeatable), `/filter` limits output to a path prefix and (with `-E`) may reach past the owning AR-PACKAGE into the nested element hierarchy itself; `/filter` segments may also use `*` as a wildcard (matches within one segment, unlike `-x` it does not span `/`).
+### `arx ls [-d <n>|--max-depth <n>] [-t <type>]... [-x <path>]... [/filter] <file.arxml>`
+Lists AR-PACKAGE paths and named elements — there's no package/element distinction in the data model; `AR-PACKAGE` is just another tag value. By default shows *everything*, any depth. `-d <n>`/`--max-depth <n>` limits output to `n` levels below the `/filter` match (or the implicit root without a filter); mirrors `find -maxdepth` (`0` = match itself only). `-t <type>` (repeatable) restricts to nodes whose own tag matches (e.g. `-t AR-PACKAGE` for packages only). `-x <path>` excludes a path (and everything under it, `*` wildcard spanning `/`, repeatable). `/filter` limits output to a path prefix, may reach past AR-PACKAGE boundaries into the element hierarchy, and its `*` wildcard segments do not span `/`.
 
 ### `arx cp <file.arxml> <pkg>... --into <out.arxml> [--rest <rest.arxml>]`
 Copies AR-PACKAGE blocks into output files. `--into` can be repeated. `--rest` collects all unmatched top-level packages.
@@ -78,8 +78,8 @@ pub const  COLORS_OFF: Colors  // empty strings (for tests / piped output)
 
 | Function | Description |
 |---|---|
-| `cmd_ls(path, show_elements, filter, recursive, excludes, deep_elements, type_filter)` | Prints paths to stdout |
-| `ls_collect(path, show_elements, filter, recursive, excludes, deep_elements, type_filter) -> Vec<String>` | Core ls logic, returns paths (use this in tests) |
+| `cmd_ls(path, filter, max_depth, excludes, type_filter)` | Prints paths to stdout |
+| `ls_collect(path, filter, max_depth, excludes, type_filter) -> Vec<String>` | Core ls logic, returns paths (use this in tests) |
 | `parse_cp_args(args) -> (Vec<CpGroup>, Option<String>)` | Parses cp CLI arguments |
 | `cmd_cp(input, groups, rest_file)` | Copies packages to output files |
 | `parse_rm_args(args) -> Vec<String>` | Normalises rm path arguments |
@@ -156,11 +156,12 @@ filtering never have to be juggled together in one state machine:
 1. **`build_tree`** (uses the standard event-loop skeleton above): one
    streaming pass builds a `Tree { nodes: Vec<Node> }` arena of *every*
    AR-PACKAGE and *every* named element at any depth, unconditionally —
-   ignoring `-e`/`-E`/`-R`/filter/`-t`/`-x` entirely. Each `Node` stores only
-   its own name plus a `parent: Option<usize>` index into the same `Vec`
-   (classic arena/index-tree pattern — no `Rc`/`RefCell`, no per-node full
-   path strings, so a node's name is stored exactly once no matter how many
-   descendants it has).
+   ignoring `-d`/`/filter`/`-t`/`-x` entirely. Each `Node` stores only its
+   own name and tag (`AR-PACKAGE` for packages, the element's own XML tag
+   otherwise — no separate package/element enum) plus a `parent:
+   Option<usize>` index into the same `Vec` (classic arena/index-tree
+   pattern — no `Rc`/`RefCell`, no per-node full path strings, so a node's
+   name is stored exactly once no matter how many descendants it has).
 2. **`query_tree`**: a plain loop over the arena that applies all `ls`
    options as simple, independent predicate checks (type, depth, then —
    only for nodes that already passed those cheap checks — the full path via
