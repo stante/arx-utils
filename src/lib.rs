@@ -210,7 +210,11 @@ pub fn ls_collect(
 
                     package_stack.push(short_name);
                     let full = format!("/{}", package_stack.join("/"));
-                    if should_print(&full, filter.as_deref(), filter_depth, recursive)
+                    // When a type filter is active, the user only wants matching
+                    // elements back (e.g. "find every I-SIGNAL-TRIGGERING"), not
+                    // the AR-PACKAGE structure around them.
+                    if type_filter.is_empty()
+                        && should_print(&full, filter.as_deref(), filter_depth, recursive)
                         && !is_excluded(&full, &excludes)
                     {
                         results.push(full);

@@ -530,16 +530,15 @@ fn ls_deep_elements_type_filter_matches_single_type() {
     let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
 
     // -E -t I-SIGNAL-TRIGGERING: still traverses through cluster/variant/
-    // channel, but only *outputs* nodes whose own tag matches.
+    // channel, but only *outputs* matching elements. AR-PACKAGE paths are
+    // suppressed entirely once a type filter is active — the user wants a
+    // flat list of matching objects, not the surrounding package structure.
     let result = ls_collect(&path, false, None, true, &[], true, &[s("I-SIGNAL-TRIGGERING")]);
     assert_eq!(
         result,
         vec![
-            "/Root",
-            "/Root/Network",
             "/Root/Network/MyCluster/Variant1/Channel1/Trig1",
             "/Root/Network/MyCluster/Variant1/Channel1/Trig2",
-            "/Types",
         ]
     );
 }
@@ -561,23 +560,20 @@ fn ls_deep_elements_type_filter_matches_multiple_types() {
     assert_eq!(
         result,
         vec![
-            "/Root",
-            "/Root/Network",
             "/Root/Network/MyCluster",
             "/Root/Network/MyCluster/Variant1/Channel1/Trig1",
             "/Root/Network/MyCluster/Variant1/Channel1/Trig2",
-            "/Types",
         ]
     );
 }
 
 #[test]
-fn ls_deep_elements_type_filter_no_match_returns_no_elements() {
+fn ls_deep_elements_type_filter_no_match_returns_nothing() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "deep.arxml", DEEP_ELEMENTS_ARXML);
 
     let result = ls_collect(&path, false, None, true, &[], true, &[s("DOES-NOT-EXIST")]);
-    assert_eq!(result, vec!["/Root", "/Root/Network", "/Types"]);
+    assert!(result.is_empty(), "Expected no results, got {:?}", result);
 }
 
 #[test]

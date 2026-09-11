@@ -34,7 +34,7 @@ arx ls [-e] [-E] [-R] [-x <path>]... [-t <type>]... [/filter/path] <file.arxml>
 | `-E` | Like `-e`, but recurse arbitrarily deep into nested named sub-elements (e.g. cluster → variant → channel → triggering). Independent of `-R` |
 | `-R` | Recursive — show all descendant packages, not just direct children |
 | `-x <path>` | Exclude this `AR-PACKAGE` (and everything under it) from the output. Supports `*` as a wildcard and may be repeated |
-| `-t <type>` | Only with `-e`/`-E`: only show elements whose own XML tag matches this type name (e.g. `I-SIGNAL-TRIGGERING`). Repeatable (OR-matched); non-matching ancestors are still traversed to reach matching descendants |
+| `-t <type>` | Only with `-e`/`-E`: only show elements whose own XML tag matches this type name (e.g. `I-SIGNAL-TRIGGERING`). Repeatable (OR-matched). Once `-t` is used, `AR-PACKAGE` paths are suppressed entirely — output is just the flat list of matching elements' full paths. Non-matching ancestors are still traversed (silently) to reach matching descendants |
 | `/filter/path` | Only show packages (and, with `-e`/`-E`, elements) under this AUTOSAR path prefix |
 
 `-x` patterns support `*` as a wildcard matching any sequence of characters
