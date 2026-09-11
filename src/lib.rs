@@ -59,8 +59,16 @@ pub fn write_arxml_footer<W: Write>(out: &mut BufWriter<W>) {
 // ls
 // ---------------------------------------------------------------------------
 
-pub fn cmd_ls(path: &str, show_elements: bool, filter: Option<&str>, recursive: bool, excludes: &[String]) {
-    for line in ls_collect(path, show_elements, filter, recursive, excludes) {
+pub fn cmd_ls(
+    path: &str,
+    show_elements: bool,
+    filter: Option<&str>,
+    recursive: bool,
+    excludes: &[String],
+    deep_elements: bool,
+    type_filter: &[String],
+) {
+    for line in ls_collect(path, show_elements, filter, recursive, excludes, deep_elements, type_filter) {
         println!("{}", line);
     }
 }
@@ -75,23 +83,50 @@ struct PkgFrame {
     capture_depth: usize,
     /// Whether we're currently inside this package's own `<ELEMENTS>` block.
     in_elements: bool,
-    /// `capture_depth` of the package that owns the currently open `ELEMENTS` block.
-    elements_pkg_depth: usize,
-    /// Depth of the current element's type tag (e.g. `<APPLICATION-SW-COMPONENT-TYPE>`) within ELEMENTS.
-    element_tag_depth: usize,
+    /// Stack of currently open tags within this package's ELEMENTS subtree
+    /// (mirrors XML nesting exactly, including wrapper/collection tags that
+    /// never get their own SHORT-NAME, e.g. `PHYSICAL-CHANNELS`).
+    elem_open: Vec<ElemFrame>,
+    /// SHORT-NAME values of all currently open *named* ancestors within this
+    /// package's ELEMENTS subtree (unnamed wrapper tags contribute nothing).
+    named_path: Vec<String>,
+    /// Whether this package's elements should be shown at all, computed once
+    /// when `ELEMENTS` opens (based on package-level filter/-R visibility).
+    elements_visible: bool,
+}
+
+/// One currently open tag within an ELEMENTS subtree. Becomes `named` once a
+/// direct `SHORT-NAME` child has been seen for it.
+struct ElemFrame {
+    depth: usize,
+    tag_name: String,
+    named: bool,
 }
 
 /// Core logic of `ls`: returns the list of paths that would be printed.
 /// Separated from `cmd_ls` so it can be called in tests without capturing stdout.
+///
+/// - `deep_elements`: if true, recurse arbitrarily deep into nested named
+///   elements (e.g. `ETHERNET-CLUSTER-VARIANTS/.../I-SIGNAL-TRIGGERINGS`),
+///   not just the first typed element directly under `ELEMENTS`. Independent
+///   of `recursive`, which only governs AR-PACKAGE recursion.
+/// - `type_filter`: if non-empty, only include element nodes whose own XML
+///   tag name (e.g. `I-SIGNAL-TRIGGERING`) matches one of the given names.
+///   Non-matching ancestors are still traversed (to reach matching
+///   descendants), just not included in the output themselves.
 pub fn ls_collect(
     path: &str,
     show_elements: bool,
     filter: Option<&str>,
     recursive: bool,
     excludes: &[String],
+    deep_elements: bool,
+    type_filter: &[String],
 ) -> Vec<String> {
     let filter = filter.map(|f| normalise_path(f));
     let excludes: Vec<String> = excludes.iter().map(|e| normalise_path(e)).collect();
+    // Deep element traversal implies elements are shown at all.
+    let show_elements = show_elements || deep_elements;
     // Depth of the filter path (0 = no filter, 1 = /Root, 2 = /Root/Components, ...)
     let filter_depth = filter.as_deref().map(|f| f.split('/').count()).unwrap_or(0);
 
@@ -103,6 +138,7 @@ pub fn ls_collect(
     let mut buf = Vec::new();
     let mut package_stack: Vec<String> = Vec::new();
     let mut capturing_short_name = false;
+    let mut capturing_element_short_name = false;
     // One frame per currently-open AR-PACKAGE, so that closing a nested
     // AR-PACKAGE correctly restores the enclosing package's own ELEMENTS
     // tracking state (instead of leaking stale depths between siblings).
@@ -120,25 +156,50 @@ pub fn ls_collect(
                     pkg_frames.push(PkgFrame {
                         capture_depth: depth,
                         in_elements: false,
-                        elements_pkg_depth: 0,
-                        element_tag_depth: 0,
+                        elem_open: Vec::new(),
+                        named_path: Vec::new(),
+                        elements_visible: false,
                     });
                 } else if let Some(frame) = pkg_frames.last_mut() {
-                    if name == "SHORT-NAME"
-                        && depth == frame.capture_depth + 1
-                        && !frame.in_elements
-                        && frame.element_tag_depth == 0
-                    {
-                        capturing_short_name = true;
-                    } else if show_elements && name == "ELEMENTS" && depth == frame.capture_depth + 1 {
-                        frame.in_elements = true;
-                        frame.elements_pkg_depth = frame.capture_depth;
-                    } else if show_elements && frame.in_elements && depth == frame.elements_pkg_depth + 2 {
-                        frame.element_tag_depth = depth;
-                    } else if show_elements && frame.in_elements && frame.element_tag_depth > 0
-                        && name == "SHORT-NAME" && depth == frame.element_tag_depth + 1
-                    {
-                        capturing_short_name = true;
+                    if !frame.in_elements {
+                        if name == "SHORT-NAME" && depth == frame.capture_depth + 1 {
+                            capturing_short_name = true;
+                        } else if show_elements && name == "ELEMENTS" && depth == frame.capture_depth + 1 {
+                            frame.in_elements = true;
+                            frame.elem_open.clear();
+                            frame.named_path.clear();
+                            // Visibility of this package's elements is fixed for
+                            // as long as we're inside its ELEMENTS subtree; it only
+                            // depends on the (unchanging) package_stack/filter/-R.
+                            let parent_depth = package_stack.len();
+                            frame.elements_visible = match filter.as_deref() {
+                                None => {
+                                    if recursive { true } else { parent_depth == filter_depth }
+                                }
+                                Some(f) => {
+                                    let parent = format!("/{}", package_stack.join("/"));
+                                    let filter_with_slash = format!("/{}", f);
+                                    let under = parent == filter_with_slash
+                                        || parent.starts_with(&format!("{}/", filter_with_slash));
+                                    if !under { false }
+                                    else if recursive { true }
+                                    else { parent == filter_with_slash }
+                                }
+                            };
+                        }
+                    } else if name == "SHORT-NAME" {
+                        // Only a direct child of the innermost open (not yet
+                        // named) tag counts as that tag's own SHORT-NAME.
+                        if let Some(top) = frame.elem_open.last() {
+                            if !top.named && depth == top.depth + 1 {
+                                capturing_element_short_name = true;
+                            }
+                        }
+                    } else {
+                        // Any other tag while inside ELEMENTS: could be a
+                        // wrapper/collection tag (no own SHORT-NAME) or a
+                        // typed element — we don't know yet, so just track it.
+                        frame.elem_open.push(ElemFrame { depth, tag_name: name, named: false });
                     }
                 }
             }
@@ -146,44 +207,37 @@ pub fn ls_collect(
                 if capturing_short_name {
                     let short_name = e.unescape().unwrap_or_default().into_owned();
                     capturing_short_name = false;
-                    let frame_in_elements = pkg_frames.last().map_or(false, |f| f.in_elements);
-                    let frame_element_tag_depth =
-                        pkg_frames.last().map_or(0, |f| f.element_tag_depth);
 
-                    if frame_in_elements && frame_element_tag_depth > 0 {
-                        let full = format!("/{}/{}", package_stack.join("/"), short_name);
-                        // Element is a direct child of package_stack's current package.
-                        // Print it when the parent package would be visible:
-                        // - in recursive mode: parent just needs to be under filter
-                        // - in non-recursive mode: parent must be exactly the filter package
-                        //   (or a top-level package if no filter)
-                        let parent_depth = package_stack.len();
-                        let element_visible = match filter.as_deref() {
-                            None => {
-                                if recursive { true } else { parent_depth == filter_depth }
+                    package_stack.push(short_name);
+                    let full = format!("/{}", package_stack.join("/"));
+                    if should_print(&full, filter.as_deref(), filter_depth, recursive)
+                        && !is_excluded(&full, &excludes)
+                    {
+                        results.push(full);
+                    }
+                } else if capturing_element_short_name {
+                    let short_name = e.unescape().unwrap_or_default().into_owned();
+                    capturing_element_short_name = false;
+
+                    if let Some(frame) = pkg_frames.last_mut() {
+                        let tag_name = match frame.elem_open.last_mut() {
+                            Some(top) => {
+                                top.named = true;
+                                top.tag_name.clone()
                             }
-                            Some(f) => {
-                                let parent = format!("/{}", package_stack.join("/"));
-                                let filter_with_slash = format!("/{}", f);
-                                let under = parent == filter_with_slash
-                                    || parent.starts_with(&format!("{}/", filter_with_slash));
-                                if !under { false }
-                                else if recursive { true }
-                                else { parent == filter_with_slash }
-                            }
+                            None => String::new(),
                         };
-                        if element_visible && !is_excluded(&full, &excludes) {
-                            results.push(full);
-                        }
-                        if let Some(frame) = pkg_frames.last_mut() {
-                            frame.element_tag_depth = 0;
-                        }
-                    } else {
-                        package_stack.push(short_name);
-                        let full = format!("/{}", package_stack.join("/"));
-                        if should_print(&full, filter.as_deref(), filter_depth, recursive)
-                            && !is_excluded(&full, &excludes)
-                        {
+
+                        frame.named_path.push(short_name);
+                        let full = format!("/{}/{}", package_stack.join("/"), frame.named_path.join("/"));
+
+                        // Shallow mode (-e only): just the first typed element
+                        // directly under ELEMENTS. Deep mode (-E): any depth.
+                        let depth_ok = deep_elements || frame.named_path.len() == 1;
+                        let type_ok = type_filter.is_empty()
+                            || type_filter.iter().any(|t| t == &tag_name);
+
+                        if depth_ok && type_ok && frame.elements_visible && !is_excluded(&full, &excludes) {
                             results.push(full);
                         }
                     }
@@ -194,10 +248,19 @@ pub fn ls_collect(
                 if name == "AR-PACKAGE" {
                     package_stack.pop();
                     pkg_frames.pop();
-                } else if name == "ELEMENTS" {
-                    if let Some(frame) = pkg_frames.last_mut() {
-                        frame.in_elements = false;
-                        frame.element_tag_depth = 0;
+                } else if let Some(frame) = pkg_frames.last_mut() {
+                    if frame.in_elements {
+                        if name == "ELEMENTS" {
+                            frame.in_elements = false;
+                            frame.elem_open.clear();
+                            frame.named_path.clear();
+                        } else if name != "SHORT-NAME" {
+                            if let Some(popped) = frame.elem_open.pop() {
+                                if popped.named {
+                                    frame.named_path.pop();
+                                }
+                            }
+                        }
                     }
                 }
                 depth -= 1;
@@ -532,7 +595,7 @@ pub const COLORS_OFF: Colors = Colors {
 /// Collect all AR-PACKAGE and ELEMENTS paths from an ARXML file as a sorted vec.
 /// If `filter` is given, only paths under that AR-PACKAGE prefix are returned.
 pub fn collect_all_paths(path: &str, filter: Option<&str>) -> Vec<String> {
-    let mut paths = ls_collect(path, true, filter, true, &[]);
+    let mut paths = ls_collect(path, true, filter, true, &[], false, &[]);
     paths.sort();
     paths
 }

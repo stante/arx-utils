@@ -37,8 +37,8 @@ tests/
 
 ## Commands
 
-### `arx ls [-e] [-R] [-x <path>]... [/filter] <file.arxml>`
-Lists AR-PACKAGE paths. `-e` includes ELEMENTS entries, `-R` recurses into sub-packages, `-x <path>` excludes a package (and everything under it, `*` wildcard supported) and may be repeated, `/filter` limits output to a path prefix.
+### `arx ls [-e] [-E] [-R] [-x <path>]... [-t <type>]... [/filter] <file.arxml>`
+Lists AR-PACKAGE paths. `-e` includes top-level ELEMENTS entries, `-E` recurses arbitrarily deep into nested named sub-elements (independent of `-R`; skips unnamed wrapper/collection tags in the path), `-R` recurses into sub-packages, `-x <path>` excludes a package (and everything under it, `*` wildcard supported) and may be repeated, `-t <type>` (with `-e`/`-E`) only shows elements whose own tag matches this type name and may be repeated, `/filter` limits output to a path prefix.
 
 ### `arx cp <file.arxml> <pkg>... --into <out.arxml> [--rest <rest.arxml>]`
 Copies AR-PACKAGE blocks into output files. `--into` can be repeated. `--rest` collects all unmatched top-level packages.
@@ -78,8 +78,8 @@ pub const  COLORS_OFF: Colors  // empty strings (for tests / piped output)
 
 | Function | Description |
 |---|---|
-| `cmd_ls(path, show_elements, filter, recursive, excludes)` | Prints paths to stdout |
-| `ls_collect(path, show_elements, filter, recursive, excludes) -> Vec<String>` | Core ls logic, returns paths (use this in tests) |
+| `cmd_ls(path, show_elements, filter, recursive, excludes, deep_elements, type_filter)` | Prints paths to stdout |
+| `ls_collect(path, show_elements, filter, recursive, excludes, deep_elements, type_filter) -> Vec<String>` | Core ls logic, returns paths (use this in tests) |
 | `parse_cp_args(args) -> (Vec<CpGroup>, Option<String>)` | Parses cp CLI arguments |
 | `cmd_cp(input, groups, rest_file)` | Copies packages to output files |
 | `parse_rm_args(args) -> Vec<String>` | Normalises rm path arguments |

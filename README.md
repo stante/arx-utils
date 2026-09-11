@@ -23,16 +23,19 @@ arx <command> [args...]
 Lists all `AR-PACKAGE` paths in an ARXML file.
 
 ```
-arx ls [-e] [-R] [-x <path>]... [/filter/path] <file.arxml>
+arx ls [-e] [-E] [-R] [-x <path>]... [-t <type>]... [/filter/path] <file.arxml>
 ```
 
 **Options:**
 
 | Option | Description |
 |---|---|
-| `-e` | Also show `ELEMENTS` entries (e.g. component names) inside packages |
-| `-R` | Recursive — show all descendants, not just direct children |
+| `-e` | Also show top-level `ELEMENTS` entries (e.g. component names) directly inside packages |
+| `-E` | Like `-e`, but recurse arbitrarily deep into nested named sub-elements (e.g. cluster → variant → channel → triggering). Independent of `-R` |
+| `-R` | Recursive — show all descendant packages, not just direct children |
 | `-x <path>` | Exclude this `AR-PACKAGE` (and everything under it) from the output. Supports `*` as a wildcard and may be repeated |
+| `-t <type>` | Only with `-e`/`-E`: only show elements whose own XML tag matches this type name (e.g. `I-SIGNAL-TRIGGERING`). Repeatable (OR-matched); non-matching ancestors are still traversed to reach matching descendants |
+| `/filter/path` | Only show packages (and, with `-e`/`-E`, elements) under this AUTOSAR path prefix |
 
 `-x` patterns support `*` as a wildcard matching any sequence of characters
 (including `/`), so a pattern doesn't have to name an exact package — e.g.
@@ -41,7 +44,10 @@ name starts with `Dummy`, along with all of their descendants. Quote the
 pattern (e.g. `'/ComponentTypes/Dummy*'`) on shells that would otherwise
 expand `*` themselves.
 
-| `/filter/path` | Only show packages under this AUTOSAR path prefix |
+`-E` walks through wrapper/collection tags that have no `SHORT-NAME` of their
+own (e.g. `ETHERNET-CLUSTER-VARIANTS`, `PHYSICAL-CHANNELS`,
+`I-SIGNAL-TRIGGERINGS`) without adding them as path segments — only elements
+that actually have their own `SHORT-NAME` show up in the output.
 
 **Examples:**
 
@@ -63,6 +69,9 @@ arx ls -R -x /Root/Components model.arxml
 
 # Exclude all packages under /ComponentTypes whose name starts with "Dummy"
 arx ls -R -x /ComponentTypes/Dummy* model.arxml
+
+# List every I-SIGNAL-TRIGGERING anywhere in the file, however deeply nested
+arx ls -R -E -t I-SIGNAL-TRIGGERING model.arxml
 ```
 
 ---
