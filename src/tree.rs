@@ -53,29 +53,12 @@ impl Tree {
     }
 }
 
-/// Per-AR-PACKAGE parsing state used while building the [`Tree`], pushed
-/// when an `AR-PACKAGE` opens and popped when it closes. Using a stack
-/// (instead of shared scalars) ensures that closing a nested AR-PACKAGE
-/// correctly restores the enclosing package's own ELEMENTS-tracking state,
-/// regardless of whether `ELEMENTS` appears before or after the nested
-/// `AR-PACKAGES` block in the XML.
-struct PkgBuildFrame {
-    /// Depth at which this AR-PACKAGE's own `<AR-PACKAGE>` start tag occurred.
-    capture_depth: usize,
-    /// Whether we're currently inside this package's own `<ELEMENTS>` block.
-    in_elements: bool,
-    /// Stack of currently open tags within this package's ELEMENTS subtree
-    /// (mirrors XML nesting exactly, including wrapper/collection tags that
-    /// never get their own SHORT-NAME, e.g. `PHYSICAL-CHANNELS`).
-    elem_open: Vec<ElemBuildFrame>,
-    /// Arena indices of all currently open *named* ancestors within this
-    /// package's ELEMENTS subtree (unnamed wrapper tags contribute nothing).
-    named_stack: Vec<usize>,
-}
-
-/// One currently open tag within an ELEMENTS subtree, during tree building.
-/// Becomes `named` once a direct `SHORT-NAME` child has been seen for it.
-struct ElemBuildFrame {
+/// One currently open tag, during tree building. Every start tag other than
+/// `SHORT-NAME` gets a frame — `AR-PACKAGE`, `AR-PACKAGES`, `ELEMENTS`, and
+/// any element or wrapper/collection tag alike, with no special case for any
+/// particular tag name. A frame becomes `named` once a direct `SHORT-NAME`
+/// child has been seen for it.
+struct OpenFrame {
     depth: usize,
     tag_name: String,
     named: bool,
@@ -85,6 +68,15 @@ struct ElemBuildFrame {
 /// and every named element at any depth. Always builds everything,
 /// regardless of any `ls` filtering options — those are applied afterwards
 /// by `query_tree`, keeping traversal and filtering fully decoupled.
+///
+/// Every open tag is tracked uniformly on a single stack, regardless of its
+/// name: a tag becomes a node the moment a direct `SHORT-NAME` child is
+/// seen, and a new node's parent is simply the nearest still-open named
+/// ancestor. There is no special case for `AR-PACKAGE` or `ELEMENTS` — this
+/// is what lets siblings of the same tag name nest arbitrarily (a package
+/// with both its own `ELEMENTS` and nested `AR-PACKAGES`, an
+/// `APPLICATION-RECORD-DATA-TYPE`'s own `ELEMENTS` inside its package's
+/// `ELEMENTS`, ...) without one closing tag being mistaken for another.
 pub(crate) fn build_tree(path: &str) -> Tree {
     let file = open_file(path);
     let reader = BufReader::new(file);
@@ -93,14 +85,14 @@ pub(crate) fn build_tree(path: &str) -> Tree {
 
     let mut buf = Vec::new();
     let mut nodes: Vec<Node> = Vec::new();
-    // Arena indices of all currently open AR-PACKAGEs.
-    let mut package_stack: Vec<usize> = Vec::new();
+    // Stack of every currently open tag (mirrors XML nesting exactly),
+    // including wrapper/collection tags that never get their own
+    // SHORT-NAME (e.g. AR-PACKAGES, ELEMENTS, PHYSICAL-CHANNELS).
+    let mut open_stack: Vec<OpenFrame> = Vec::new();
+    // Arena indices of all currently open *named* ancestors (unnamed
+    // wrapper tags contribute nothing), used to find each new node's parent.
+    let mut named_stack: Vec<usize> = Vec::new();
     let mut capturing_short_name = false;
-    let mut capturing_element_short_name = false;
-    // One frame per currently-open AR-PACKAGE, so that closing a nested
-    // AR-PACKAGE correctly restores the enclosing package's own ELEMENTS
-    // tracking state (instead of leaking stale depths between siblings).
-    let mut pkg_frames: Vec<PkgBuildFrame> = Vec::new();
     let mut depth: usize = 0;
 
     loop {
@@ -109,92 +101,37 @@ pub(crate) fn build_tree(path: &str) -> Tree {
                 depth += 1;
                 let name = local_name_str(e.local_name().as_ref());
 
-                if name == "AR-PACKAGE" {
-                    pkg_frames.push(PkgBuildFrame {
-                        capture_depth: depth,
-                        in_elements: false,
-                        elem_open: Vec::new(),
-                        named_stack: Vec::new(),
-                    });
-                } else if let Some(frame) = pkg_frames.last_mut() {
-                    if !frame.in_elements {
-                        if name == "SHORT-NAME" && depth == frame.capture_depth + 1 {
+                if name == "SHORT-NAME" {
+                    // Only a direct child of the innermost open (not yet
+                    // named) tag counts as that tag's own SHORT-NAME.
+                    if let Some(top) = open_stack.last() {
+                        if !top.named && depth == top.depth + 1 {
                             capturing_short_name = true;
-                        } else if name == "ELEMENTS" && depth == frame.capture_depth + 1 {
-                            frame.in_elements = true;
-                            frame.elem_open.clear();
-                            frame.named_stack.clear();
                         }
-                    } else if name == "SHORT-NAME" {
-                        // Only a direct child of the innermost open (not yet
-                        // named) tag counts as that tag's own SHORT-NAME.
-                        if let Some(top) = frame.elem_open.last() {
-                            if !top.named && depth == top.depth + 1 {
-                                capturing_element_short_name = true;
-                            }
-                        }
-                    } else {
-                        // Any other tag while inside ELEMENTS: could be a
-                        // wrapper/collection tag (no own SHORT-NAME) or a
-                        // typed element — we don't know yet, so just track it.
-                        frame.elem_open.push(ElemBuildFrame { depth, tag_name: name, named: false });
                     }
+                } else {
+                    open_stack.push(OpenFrame { depth, tag_name: name, named: false });
                 }
             }
             Ok(Event::Text(ref e)) => {
                 if capturing_short_name {
-                    let short_name = e.unescape().unwrap_or_default().into_owned();
                     capturing_short_name = false;
-
-                    let parent = package_stack.last().copied();
-                    nodes.push(Node { name: short_name, tag: "AR-PACKAGE".to_string(), parent });
-                    package_stack.push(nodes.len() - 1);
-                } else if capturing_element_short_name {
                     let short_name = e.unescape().unwrap_or_default().into_owned();
-                    capturing_element_short_name = false;
 
-                    if let Some(frame) = pkg_frames.last_mut() {
-                        let tag_name = match frame.elem_open.last_mut() {
-                            Some(top) => {
-                                top.named = true;
-                                top.tag_name.clone()
-                            }
-                            None => String::new(),
-                        };
-
-                        let parent = frame
-                            .named_stack
-                            .last()
-                            .copied()
-                            .or_else(|| package_stack.last().copied());
-
-                        nodes.push(Node { name: short_name, tag: tag_name, parent });
-                        frame.named_stack.push(nodes.len() - 1);
+                    if let Some(top) = open_stack.last_mut() {
+                        top.named = true;
+                        let parent = named_stack.last().copied();
+                        nodes.push(Node { name: short_name, tag: top.tag_name.clone(), parent });
+                        named_stack.push(nodes.len() - 1);
                     }
                 }
             }
             Ok(Event::End(ref e)) => {
                 let name = local_name_str(e.local_name().as_ref());
-                if name == "AR-PACKAGE" {
-                    package_stack.pop();
-                    pkg_frames.pop();
-                } else if let Some(frame) = pkg_frames.last_mut() {
-                    if frame.in_elements {
-                        if name == "ELEMENTS" && frame.elem_open.is_empty() {
-                            // A nested ELEMENTS tag (e.g. inside an
-                            // APPLICATION-RECORD-DATA-TYPE's own element
-                            // list) is pushed onto elem_open just like any
-                            // other wrapper tag, so it's only the package's
-                            // own ELEMENTS closing once elem_open is empty.
-                            frame.in_elements = false;
-                            frame.elem_open.clear();
-                            frame.named_stack.clear();
-                        } else if name != "SHORT-NAME" {
-                            if let Some(popped) = frame.elem_open.pop() {
-                                if popped.named {
-                                    frame.named_stack.pop();
-                                }
-                            }
+                if name != "SHORT-NAME" {
+                    if let Some(popped) = open_stack.pop() {
+                        if popped.named {
+                            named_stack.pop();
                         }
                     }
                 }
