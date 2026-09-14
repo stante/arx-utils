@@ -180,7 +180,12 @@ pub(crate) fn build_tree(path: &str) -> Tree {
                     pkg_frames.pop();
                 } else if let Some(frame) = pkg_frames.last_mut() {
                     if frame.in_elements {
-                        if name == "ELEMENTS" {
+                        if name == "ELEMENTS" && frame.elem_open.is_empty() {
+                            // A nested ELEMENTS tag (e.g. inside an
+                            // APPLICATION-RECORD-DATA-TYPE's own element
+                            // list) is pushed onto elem_open just like any
+                            // other wrapper tag, so it's only the package's
+                            // own ELEMENTS closing once elem_open is empty.
                             frame.in_elements = false;
                             frame.elem_open.clear();
                             frame.named_stack.clear();

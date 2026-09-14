@@ -107,6 +107,40 @@ const DEEP_ELEMENTS_ARXML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </AUTOSAR>
 "#;
 
+/// ARXML with two sibling APPLICATION-RECORD-DATA-TYPEs, each with its own
+/// nested <ELEMENTS> block of APPLICATION-RECORD-ELEMENTs — the same tag
+/// name ("ELEMENTS") as the enclosing package's own ELEMENTS block.
+/// Regression fixture for a parser-state leak where closing the inner
+/// ELEMENTS was mistaken for closing the package's outer ELEMENTS, causing
+/// every sibling after the first record type to be silently dropped.
+const NESTED_ELEMENTS_TAG_ARXML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<AUTOSAR xmlns="http://autosar.org/schema/r4.0">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>Pkg</SHORT-NAME>
+      <ELEMENTS>
+        <APPLICATION-RECORD-DATA-TYPE>
+          <SHORT-NAME>Record1</SHORT-NAME>
+          <ELEMENTS>
+            <APPLICATION-RECORD-ELEMENT>
+              <SHORT-NAME>Elem1a</SHORT-NAME>
+            </APPLICATION-RECORD-ELEMENT>
+          </ELEMENTS>
+        </APPLICATION-RECORD-DATA-TYPE>
+        <APPLICATION-RECORD-DATA-TYPE>
+          <SHORT-NAME>Record2</SHORT-NAME>
+          <ELEMENTS>
+            <APPLICATION-RECORD-ELEMENT>
+              <SHORT-NAME>Elem2a</SHORT-NAME>
+            </APPLICATION-RECORD-ELEMENT>
+          </ELEMENTS>
+        </APPLICATION-RECORD-DATA-TYPE>
+      </ELEMENTS>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>
+"#;
+
 /// ARXML where a package has BOTH its own ELEMENTS *and* nested
 /// AR-PACKAGES, with ELEMENTS declared *after* the nested AR-PACKAGES block
 /// (a valid ordering some real-world tools produce). Regression fixture for
@@ -303,6 +337,28 @@ fn ls_default_shows_deeply_nested_elements_too() {
             "/Types",
         ]
     );
+}
+
+#[test]
+fn ls_nested_elements_tag_shows_all_sibling_record_types() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "nested_elements_tag.arxml", NESTED_ELEMENTS_TAG_ARXML);
+
+    let result = ls_collect(&path, None, None, &[], &[]);
+    assert_eq!(
+        result,
+        vec![
+            "/Pkg",
+            "/Pkg/Record1",
+            "/Pkg/Record1/Elem1a",
+            "/Pkg/Record2",
+            "/Pkg/Record2/Elem2a",
+        ]
+    );
+
+    let filtered =
+        ls_collect(&path, None, None, &[], &[s("APPLICATION-RECORD-DATA-TYPE")]);
+    assert_eq!(filtered, vec!["/Pkg/Record1", "/Pkg/Record2"]);
 }
 
 #[test]
