@@ -99,9 +99,9 @@ pub(crate) fn build_tree(path: &str) -> Tree {
         match xml.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
                 depth += 1;
-                let name = local_name_str(e.local_name().as_ref());
+                let local_name = e.local_name();
 
-                if name == "SHORT-NAME" {
+                if local_name.as_ref() == b"SHORT-NAME" {
                     // Only a direct child of the innermost open (not yet
                     // named) tag counts as that tag's own SHORT-NAME.
                     if let Some(top) = open_stack.last() {
@@ -110,7 +110,11 @@ pub(crate) fn build_tree(path: &str) -> Tree {
                         }
                     }
                 } else {
-                    open_stack.push(OpenFrame { depth, tag_name: name, named: false });
+                    // Only allocate a String for tags we actually keep
+                    // around on the stack — SHORT-NAME itself (handled
+                    // above) and plain closing tags (below) never need one.
+                    let tag_name = local_name_str(local_name.as_ref());
+                    open_stack.push(OpenFrame { depth, tag_name, named: false });
                 }
             }
             Ok(Event::Text(ref e)) => {
@@ -121,14 +125,19 @@ pub(crate) fn build_tree(path: &str) -> Tree {
                     if let Some(top) = open_stack.last_mut() {
                         top.named = true;
                         let parent = named_stack.last().copied();
-                        nodes.push(Node { name: short_name, tag: top.tag_name.clone(), parent });
+                        // tag_name is never read again after this, so move
+                        // it out instead of cloning.
+                        let tag = std::mem::take(&mut top.tag_name);
+                        nodes.push(Node { name: short_name, tag, parent });
                         named_stack.push(nodes.len() - 1);
                     }
                 }
             }
             Ok(Event::End(ref e)) => {
-                let name = local_name_str(e.local_name().as_ref());
-                if name != "SHORT-NAME" {
+                // A byte comparison here (instead of decoding to a String
+                // first) is exact for ASCII tag names like SHORT-NAME, and
+                // the result is only ever compared, never stored.
+                if e.local_name().as_ref() != b"SHORT-NAME" {
                     if let Some(popped) = open_stack.pop() {
                         if popped.named {
                             named_stack.pop();
