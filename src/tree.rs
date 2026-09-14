@@ -20,6 +20,12 @@ pub(crate) struct Node {
     pub(crate) name: String,
     pub(crate) tag: String,
     pub(crate) parent: Option<usize>,
+    /// Byte offsets of this node's own XML element (opening tag through
+    /// matching closing tag) in the source file, as reported by
+    /// `quick_xml::Reader::buffer_position`. Used by `range.rs` to slice
+    /// the raw bytes of a package or element without re-serialising it.
+    pub(crate) start: u64,
+    pub(crate) end: u64,
 }
 
 /// Arena-based tree of every named `AR-PACKAGE` and every named element (at
@@ -62,6 +68,10 @@ struct OpenFrame {
     depth: usize,
     tag_name: String,
     named: bool,
+    /// Byte offset where this tag's own opening tag began.
+    start_pos: u64,
+    /// Arena index of this tag's own [`Node`], once `named` (`None` until then).
+    node_idx: Option<usize>,
 }
 
 /// Streams `path` once and builds the full [`Tree`] of every `AR-PACKAGE`
@@ -96,7 +106,11 @@ pub(crate) fn build_tree(path: &str) -> Tree {
     let mut depth: usize = 0;
 
     loop {
-        match xml.read_event_into(&mut buf) {
+        let pos_before = xml.buffer_position() as u64;
+        let event = xml.read_event_into(&mut buf);
+        let pos_after = xml.buffer_position() as u64;
+
+        match event {
             Ok(Event::Start(ref e)) => {
                 depth += 1;
                 let local_name = e.local_name();
@@ -114,7 +128,13 @@ pub(crate) fn build_tree(path: &str) -> Tree {
                     // around on the stack — SHORT-NAME itself (handled
                     // above) and plain closing tags (below) never need one.
                     let tag_name = local_name_str(local_name.as_ref());
-                    open_stack.push(OpenFrame { depth, tag_name, named: false });
+                    open_stack.push(OpenFrame {
+                        depth,
+                        tag_name,
+                        named: false,
+                        start_pos: pos_before,
+                        node_idx: None,
+                    });
                 }
             }
             Ok(Event::Text(ref e)) => {
@@ -128,8 +148,11 @@ pub(crate) fn build_tree(path: &str) -> Tree {
                         // tag_name is never read again after this, so move
                         // it out instead of cloning.
                         let tag = std::mem::take(&mut top.tag_name);
-                        nodes.push(Node { name: short_name, tag, parent });
-                        named_stack.push(nodes.len() - 1);
+                        let start = top.start_pos;
+                        nodes.push(Node { name: short_name, tag, parent, start, end: 0 });
+                        let idx = nodes.len() - 1;
+                        top.node_idx = Some(idx);
+                        named_stack.push(idx);
                     }
                 }
             }
@@ -141,6 +164,9 @@ pub(crate) fn build_tree(path: &str) -> Tree {
                     if let Some(popped) = open_stack.pop() {
                         if popped.named {
                             named_stack.pop();
+                            if let Some(idx) = popped.node_idx {
+                                nodes[idx].end = pos_after;
+                            }
                         }
                     }
                 }
