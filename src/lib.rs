@@ -12,7 +12,7 @@ pub use diff::{
     cmd_diff, cmd_diff_extended, collect_all_element_fields, collect_all_paths,
     collect_element_fields, Colors, COLORS_OFF, COLORS_ON,
 };
-pub use ls::{cmd_ls, ls_collect};
+pub use ls::{cmd_ls, ls_collect, parse_ls_args, LS_USAGE};
 pub use range::{
     collect_root_attrs, find_all_toplevel_package_ranges, find_element_ranges,
     find_package_ranges, PackageRange,

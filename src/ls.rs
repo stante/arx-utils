@@ -5,6 +5,81 @@ use crate::path_match::{path_under_pattern, wildcard_match};
 use crate::tree::{build_tree, Tree};
 use crate::util::normalise_path;
 
+pub const LS_USAGE: &str =
+    "Usage: arx-ls [-d <n>|--max-depth <n>] [-t <type>]... [-x <path>]... [/filter/path] <file.arxml>";
+
+/// Parses `arx ls` arguments (everything after the program name) into
+/// `(file, filter, max_depth, excludes, type_filter)`.
+///
+/// The file and the optional filter path are told apart by *position*, not
+/// by content: the file is always the last positional argument, and a
+/// filter path (documented to come before it) is whatever positional
+/// argument precedes it, if any. This mirrors how `arx-diff` tells its two
+/// input files apart from its own optional trailing filter path.
+///
+/// Earlier this sniffed a leading `/` to decide "this positional argument
+/// is a filter path", which meant an absolute *file* path (an entirely
+/// normal thing to pass) was always misread as a filter, leaving no file
+/// argument at all.
+pub fn parse_ls_args(
+    args: &[String],
+) -> (String, Option<String>, Option<usize>, Vec<String>, Vec<String>) {
+    let mut max_depth: Option<usize> = None;
+    let mut excludes: Vec<String> = Vec::new();
+    let mut type_filter: Vec<String> = Vec::new();
+    let mut positional: Vec<String> = Vec::new();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-d" | "--max-depth" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: {} requires a number argument.", args[i - 1]);
+                    eprintln!("{}", LS_USAGE);
+                    std::process::exit(1);
+                }
+                max_depth = Some(args[i].parse::<usize>().unwrap_or_else(|_| {
+                    eprintln!("Error: invalid --max-depth value '{}'.", args[i]);
+                    std::process::exit(1);
+                }));
+            }
+            "-x" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: -x requires a path argument.");
+                    eprintln!("{}", LS_USAGE);
+                    std::process::exit(1);
+                }
+                excludes.push(args[i].clone());
+            }
+            "-t" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: -t requires a type name argument.");
+                    eprintln!("{}", LS_USAGE);
+                    std::process::exit(1);
+                }
+                type_filter.push(args[i].clone());
+            }
+            other => positional.push(other.to_string()),
+        }
+        i += 1;
+    }
+
+    let file = positional.pop().unwrap_or_else(|| {
+        eprintln!("{}", LS_USAGE);
+        std::process::exit(1);
+    });
+    let filter = positional.pop();
+    if !positional.is_empty() {
+        eprintln!("{}", LS_USAGE);
+        std::process::exit(1);
+    }
+
+    (file, filter, max_depth, excludes, type_filter)
+}
+
 pub fn cmd_ls(
     path: &str,
     filter: Option<&str>,

@@ -5,7 +5,7 @@ use std::io::Write;
 use arx_utils::{
     cmd_cp, cmd_diff, cmd_diff_extended, cmd_rm, collect_all_element_fields, collect_all_paths,
     collect_element_fields, find_element_ranges, find_package_ranges, ls_collect, normalise_path,
-    parse_cp_args, parse_rm_args, CpGroup,
+    parse_cp_args, parse_ls_args, parse_rm_args, CpGroup,
 };
 use tempfile::TempDir;
 
@@ -893,6 +893,60 @@ fn cmd_cp_preserves_nested_content() {
     let names = ls_collect(&output, None, None, &[], &[]);
     assert!(names.contains(&"/Root/Components".to_string()));
     assert!(names.contains(&"/Root/Interfaces".to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// parse_ls_args
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_ls_args_file_only() {
+    let args = vec![s("file.arxml")];
+    let (file, filter, max_depth, excludes, type_filter) = parse_ls_args(&args);
+    assert_eq!(file, "file.arxml");
+    assert_eq!(filter, None);
+    assert_eq!(max_depth, None);
+    assert!(excludes.is_empty());
+    assert!(type_filter.is_empty());
+}
+
+#[test]
+fn parse_ls_args_absolute_file_path_is_not_mistaken_for_a_filter() {
+    // Regression: an absolute file path starts with '/', exactly like a
+    // filter path does — it must still be recognised as the file, not
+    // swallowed as a (bogus) filter with no file left over.
+    let args = vec![s("/home/user/data/model.arxml")];
+    let (file, filter, _, _, _) = parse_ls_args(&args);
+    assert_eq!(file, "/home/user/data/model.arxml");
+    assert_eq!(filter, None);
+}
+
+#[test]
+fn parse_ls_args_filter_then_absolute_file_path() {
+    let args = vec![s("/Root/Components"), s("/home/user/data/model.arxml")];
+    let (file, filter, _, _, _) = parse_ls_args(&args);
+    assert_eq!(file, "/home/user/data/model.arxml");
+    assert_eq!(filter, Some("/Root/Components".to_string()));
+}
+
+#[test]
+fn parse_ls_args_flags_in_any_order_around_positionals() {
+    let args = vec![
+        s("-t"),
+        s("AR-PACKAGE"),
+        s("/Root/Components"),
+        s("-d"),
+        s("2"),
+        s("-x"),
+        s("Root/Dummy"),
+        s("/home/user/data/model.arxml"),
+    ];
+    let (file, filter, max_depth, excludes, type_filter) = parse_ls_args(&args);
+    assert_eq!(file, "/home/user/data/model.arxml");
+    assert_eq!(filter, Some("/Root/Components".to_string()));
+    assert_eq!(max_depth, Some(2));
+    assert_eq!(excludes, vec!["Root/Dummy"]);
+    assert_eq!(type_filter, vec!["AR-PACKAGE"]);
 }
 
 // ---------------------------------------------------------------------------
